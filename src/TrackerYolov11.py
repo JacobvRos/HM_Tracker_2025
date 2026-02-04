@@ -173,31 +173,23 @@ class Tracker:
             pass
         
     def load_network(self, model_path):
-        # --- MODIFIED FOR SAHI TILING INFERENCE ---
         import torch
-        print(f"Loading YOLO model with SAHI (Tiling) from: {model_path}")
+        print(f"Loading YOLOv11 model from: {model_path}")
         
         try:
-            # 检查设备
             self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
             if self.device != 'cpu':
                 print(f" >> SUCCESS: GPU Detected: {torch.cuda.get_device_name(0)}")
             else:
                 print(" >> WARNING: No GPU detected. Running on CPU.")
 
-            # 使用 SAHI 加载模型
-            # model_type='yolov8' 通常兼容 ultralytics 的 v8/v11/v12 权重
-            self.detection_model = AutoDetectionModel.from_pretrained(
-                model_type='yolov8', 
-                model_path=model_path,
-                confidence_threshold=0.3, # 这里的置信度
-                device=self.device
-            )
+            # Load standard Ultralytics YOLO model
+            self.model = YOLO(model_path)
+            self.model.to(self.device)
             
-            # 获取类别名称 (SAHI model 内部保留了 names)
-            self.model_names = self.detection_model.model.names
-            print("SAHI Model loaded successfully.")
-            print(f"Classes found: {self.model_names}")
+            # Get class names dictionary
+            self.model_names = self.model.names
+            print(f"Model loaded successfully. Classes: {self.model_names}")
             
         except Exception as e:
             print(f"Error loading model: {e}")
@@ -472,18 +464,9 @@ class Tracker:
     
     # --- MODIFIED CNN FUNCTION FOR YOLO11 ---
     def cnn(self, frame):
-        # 1. 使用 SAHI 进行切片推理
-        # slice_height/width: 建议设置为你训练时的切片大小 (比如 640 或 512)
-        # overlap_height_ratio: 切片重叠率，通常 0.2
-        result = get_sliced_prediction(
-            frame,
-            self.detection_model,
-            slice_height=712,  # <--- 根据你的训练尺寸调整，如果图像是 1176x712，切太大会变成不切片
-            slice_width=588,   # <--- 根据你的训练尺寸调整
-            overlap_height_ratio=0.2,
-            overlap_width_ratio=0.2,
-            verbose=0
-        )
+        # 1. Standard YOLO Inference on the full frame
+        # stream=True is more memory efficient for video processing
+        results = self.model(frame, conf=0.7, verbose=False, imgsz=1280)
 
         self.Rat = None
         self.Researcher = None
@@ -494,40 +477,38 @@ class Tracker:
         detected_head_this_frame = False
         detected_rat_body_this_frame = False
 
-        # 2. 遍历 SAHI 的检测结果
-        # SAHI 返回的是 object_prediction_list
-        for object_prediction in result.object_prediction_list:
-            # 提取边界框 (SAHI 返回的是 Box 对象)
-            bbox = object_prediction.bbox
-            x1, y1, x2, y2 = int(bbox.minx), int(bbox.miny), int(bbox.maxx), int(bbox.maxy)
-            
-            # 提取信息
-            confidence = object_prediction.score.value
-            cls_id = object_prediction.category.id
-            label = object_prediction.category.name
-            
-            # 计算质心
-            center_x = int((x1 + x2) / 2)
-            center_y = int((y1 + y2) / 2)
-            centroid = (center_x, center_y)
+        # 2. Parse results (Standard Ultralytics Result object)
+        for r in results:
+            boxes = r.boxes
+            for box in boxes:
+                # Get coordinates
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
+                
+                # Get metadata
+                confidence = float(box.conf[0])
+                cls_id = int(box.cls[0])
+                label = self.model_names[cls_id]
+                
+                # Calculate centroid
+                centroid = (int((x1 + x2) / 2), int((y1 + y2) / 2))
 
-            # 绘图 (复制你原来的风格)
-            # 注意：SAHI 的 cls_id 可能需要手动映射颜色，这里假设 colors 长度足够
-            color = colors[cls_id % len(colors)]
-            cv2.rectangle(self.disp_frame, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(self.disp_frame, f"{label} {confidence:.2f}", (x1, y1 + 20), font, 1, (255, 255, 255), 1)
+                # Drawing logic (Matches your original style)
+                color = colors[cls_id % len(colors)]
+                cv2.rectangle(self.disp_frame, (x1, y1), (x2, y2), color, 2)
+                cv2.putText(self.disp_frame, f"{label} {confidence:.2f}", 
+                            (x1, y1 + 20), font, 1, (255, 255, 255), 1)
 
-            # 分类逻辑 (保持原样)
-            if label == 'head':
-                rat_candidates.append((confidence, centroid, 'head'))
-                detected_head_this_frame = True
-            elif label == 'rat':
-                rat_candidates.append((confidence, centroid, 'rat'))
-                detected_rat_body_this_frame = True
-            elif label == 'researcher':
-                researcher_candidates.append((confidence, centroid))
+                # Classification Logic
+                if label == 'head':
+                    rat_candidates.append((confidence, centroid, 'head'))
+                    detected_head_this_frame = True
+                elif label == 'rat':
+                    rat_candidates.append((confidence, centroid, 'rat'))
+                    detected_rat_body_this_frame = True
+                elif label == 'researcher':
+                    researcher_candidates.append((confidence, centroid))
 
-        # 3. 决策逻辑 (保持原样)
+        # 3. Decision logic (Remains exactly as you had it)
         if rat_candidates:
             rat_candidates.sort(key=lambda x: x[0], reverse=True)
             best_conf, best_centroid, best_label = rat_candidates[0]
@@ -539,8 +520,6 @@ class Tracker:
                 head_cands = [c for c in rat_candidates if c[2] == 'head']
                 if head_cands:
                     _, best_centroid, _ = head_cands[0]
-                else:
-                    pass 
 
             self.Rat = best_centroid
 
@@ -548,8 +527,8 @@ class Tracker:
             researcher_candidates.sort(key=lambda x: x[0], reverse=True)
             self.Researcher = researcher_candidates[0][1]
 
-        # 4. 后处理逻辑 (保持原样)
-        # 4. Post-Detection Logic (State Machine)
+        # 4. Post-Detection State Machine logic (Rest of your existing function...)
+        # [Keep the rest of your logic from "if self.Rat is not None:" onwards]
         if self.Rat is not None:
             self.last_rat_pos = self.Rat
         if self.Researcher is not None:

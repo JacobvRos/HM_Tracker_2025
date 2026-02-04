@@ -12,8 +12,8 @@ set MAX_GPU=90
 set WAIT_SECONDS=10
 
 :: Paths
-set "ONNX_WEIGHTS_PATH=C:\Users\gl_pc\Desktop\code\Yolov_models\rat_yolov11_drive_run17\weights\best.pt"
-set "TRODES_EXPORT_CMD=C:\Users\gl_pc\Desktop\track\trodes\trodesexport.exe"
+set "ONNX_WEIGHTS_PATH=C:\Users\gl_pc\Desktop\data\yolov/best_lulu.pt"
+set "TRODES_EXPORT_CMD=C:\Users\gl_pc\Desktop\Trodes_2-8-0_Windows11\trodesexport.exe"
 set FREQ=30000
 
 :: ========================================================
@@ -141,14 +141,14 @@ REM 2. SYNC CHECK
 echo.
 echo [STEP 2] Running Sync Script...
 if exist ".\src\Video_LED_Sync_using_ICA.py" (
-    python -u ./src/Video_LED_Sync_using_ICA.py -i "%IP%" -o "%OP%" -f %FREQ%
+REM    python -u ./src/Video_LED_Sync_using_ICA.py -i "%IP%" -o "%OP%" -f %FREQ%
 )
 
 REM 3. STITCH CHECK
 echo.
 echo [STEP 3] Running Stitching...
 if exist ".\src\join_views.py" (
-    python -u ./src/join_views.py "%IP%"
+REM    python -u ./src/join_views.py "%IP%"
 )
 
 REM 4. TRACKER CHECK

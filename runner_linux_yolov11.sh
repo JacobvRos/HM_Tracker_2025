@@ -94,7 +94,7 @@ run_pipeline() {
         if [[ -f "$IP/stitched.mp4" ]]; then
             echo "--- RUNNING YOLO TRACKER ---" 
 
-            python3 -u ./src/TrackerYolov.py \
+            python3 -u ./src/TrackerYolov11.py \
                 --input_folder "$IP" \
                 --output_folder "$OP" \
                 --onnx_weight "$ONNX_WEIGHTS_PATH" 
