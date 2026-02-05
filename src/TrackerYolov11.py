@@ -5,6 +5,7 @@ Description: 1. Reads metadata from *RecordingMeta.xlsx (Handles vertical lists)
              2. Automatically finds 'stitched.mp4' in input_folder.
              3. Optimized for Batch/Massive Analysis.
              4. Updated to use Ultralytics YOLO11x.pt
+             5. STREAMING MODE ENABLED
 '''
 
 from itertools import groupby
