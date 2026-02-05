@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 '''
-Title: Tracker (Stream Mode / Excel Column Lists / Auto-Video) - UPDATED FOR YOLO11
+Title: Tracker (Headless / Excel Column Lists / Auto-Video) - UPDATED FOR YOLO11
 Description: 1. Reads metadata from *RecordingMeta.xlsx (Handles vertical lists).
              2. Automatically finds 'stitched.mp4' in input_folder.
              3. Optimized for Batch/Massive Analysis.
              4. Updated to use Ultralytics YOLO11x.pt
-             5. STREAMING MODE ENABLED
 '''
 
 from itertools import groupby
@@ -15,7 +14,12 @@ from collections import deque
 from tools import mask
 import cv2
 # import onnxruntime  <-- REMOVED
-from ultralytics import YOLO # <-- ADDED
+# ... 现有的 imports ...
+from ultralytics import YOLO 
+# --- ADDED FOR TILING ---
+from sahi import AutoDetectionModel
+from sahi.predict import get_sliced_prediction
+# ------------------------
 import os
 import math
 import time
@@ -28,6 +32,8 @@ import sys
 import argparse
 import glob
 from tqdm import tqdm
+
+
 
 # --- CONFIGURATION ---
 FONT = cv2.FONT_HERSHEY_TRIPLEX
@@ -174,7 +180,6 @@ class Tracker:
             self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
             if self.device != 'cpu':
                 print(f" >> SUCCESS: GPU Detected: {torch.cuda.get_device_name(0)}")
-                self.device = 0 # Set device to GPU ID 0
             else:
                 print(" >> WARNING: No GPU detected. Running on CPU.")
 
@@ -188,6 +193,8 @@ class Tracker:
             
         except Exception as e:
             print(f"Error loading model: {e}")
+            import traceback
+            traceback.print_exc()
             sys.exit(1)
 
     def load_session(self, vp, nl, n, out):
@@ -260,7 +267,14 @@ class Tracker:
         self.researcher_goal_timer = 0.0
 
     def run_vid(self):
-        print('\nStarting video processing (STREAM MODE).....\n')
+        print('\nStarting video processing (Live Stream Enabled).....\n')
+        
+        # --- GUI SETUP ---
+        window_name = f"Tracker - Rat {self.rat}"
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL) 
+        cv2.resizeWindow(window_name, 1176, 712) # 设置一个合理的初始大小
+        # -----------------
+
         if self.start_point is None:
             with open(self.save, 'a+') as file:
                 file.write(f"Rat number: {self.rat} , Date: {self.date} \n")
@@ -291,21 +305,25 @@ class Tracker:
             pbar.update(1)
 
             # Resize matches your original logic
-            self.disp_frame = cv2.resize(self.frame, (1280, 736))
+            self.disp_frame = cv2.resize(self.frame, (1176, 712))
             
             self.t1 = time.time()
             self.cnn(self.disp_frame) 
             self.annotate_frame(self.disp_frame)
             
+            # Write to video file
             self.out.write(self.disp_frame)
-
-            # --- ADDED FOR STREAMING ---
-            cv2.imshow("Tracker Stream", self.disp_frame)
-            # Press 'q' to quit
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                print("Manual interruption by user.")
+            
+            # --- SHOW VIDEO WINDOW (STREAM) ---
+            cv2.imshow(window_name, self.disp_frame)
+            
+            # Wait 1ms for key press. If 'q' is pressed, stop the loop.
+            # waitKey is REQUIRED for imshow to redraw the window.
+            k = cv2.waitKey(1) & 0xFF
+            if k == ord('q'):
+                print("\nUser interrupted execution via Window (Pressed 'q').")
                 break
-            # ---------------------------
+            # ----------------------------------
             
             rat_x = self.pos_centroid[0] if self.pos_centroid else np.nan
             rat_y = self.pos_centroid[1] if self.pos_centroid else np.nan
@@ -354,9 +372,13 @@ class Tracker:
         hours, rem = divmod(end - self.Start_Time, 3600)
         minutes, seconds = divmod(rem, 60)
         print("\nTracking process finished in: {:0>2}:{:0>2}:{:05.2f}".format(int(hours), int(minutes), seconds))
+        
         self.cap.release()
         self.out.release() 
-        cv2.destroyAllWindows() # --- ADDED CLEANUP ---
+        
+        # --- CLEANUP GUI ---
+        cv2.destroyAllWindows()
+        # -------------------
 
     def export_tracking_data(self):
         print("\n>> Compiling tracking data to CSV...")
@@ -488,23 +510,17 @@ class Tracker:
 
         # 3. Decision logic (Remains exactly as you had it)
         if rat_candidates:
-            # Sort by confidence
             rat_candidates.sort(key=lambda x: x[0], reverse=True)
-            
             best_conf, best_centroid, best_label = rat_candidates[0]
 
             if best_label == 'head':
                 self.locked_to_head = True
 
-            # If locked to head, but best detection is 'rat' (body), try to find a head instead
             if self.locked_to_head and best_label != 'head':
                 head_cands = [c for c in rat_candidates if c[2] == 'head']
                 if head_cands:
                     _, best_centroid, _ = head_cands[0]
 
-            # Special filter from original code:
-            # "if not any(... head ...)" check was inside the loop in original.
-            # Here we just select the best candidate.
             self.Rat = best_centroid
 
         if researcher_candidates:
@@ -795,6 +811,30 @@ class Tracker:
                         self.time_points.append([self.converted_time, node_name])
                     if node_name != self.saved_nodes[(len(self.saved_nodes)) - 2]:
                         self.time_points.append([self.converted_time, node_name])
+
+            cv2.putText(frame, 'Trial:' + str(self.trial_num), (60, 60),
+                        fontFace=FONT, fontScale=0.75, color=(255, 255, 255), thickness=1)
+            cv2.putText(frame, 'Currently writing to file...', (60, 80),
+                        fontFace=FONT, fontScale=0.75, color=(255, 255, 255), thickness=1)
+            cv2.putText(frame, "Rat Count: " + str(self.count_rat), (40, 130),
+                        fontFace=FONT, fontScale=0.65, color=(255, 255, 255), thickness=1)
+            cv2.putText(frame, "Rat-head Count: " + str(self.count_head), (40, 160),
+                        fontFace=FONT, fontScale=0.65, color=(255, 255, 255), thickness=1)
+
+            if len(self.centroid_list) >= 2:
+                for i in range(1, len(self.centroid_list)):
+                    cv2.line(frame, self.centroid_list[i], self.centroid_list[i - 1],
+                             color=(255, 0, 60), thickness=1)
+            cv2.line(frame, (self.pos_centroid[0] - 5, self.pos_centroid[1]),
+                     (self.pos_centroid[0] + 5, self.pos_centroid[1]),
+                     color=(0, 255, 0), thickness=2)
+            cv2.line(frame, (self.pos_centroid[0], self.pos_centroid[1] - 5),
+                     (self.pos_centroid[0], self.pos_centroid[1] + 5),
+                     color=(0, 255, 0), thickness=2)
+
+            start_index = max(0, len(self.saved_nodes) - 50)
+            for i in range(start_index, len(self.saved_nodes)):
+                self.annotate_node(frame, point=self.node_pos[i], node=self.saved_nodes[i], t=2)
 
     def save_to_file(self, fname):
         savelist = []
