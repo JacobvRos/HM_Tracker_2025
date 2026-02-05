@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 '''
-Title: Tracker (Headless / Excel Column Lists / Auto-Video) - UPDATED FOR YOLO11
+Title: Tracker (Stream Mode / Excel Column Lists / Auto-Video) - UPDATED FOR YOLO11
 Description: 1. Reads metadata from *RecordingMeta.xlsx (Handles vertical lists).
              2. Automatically finds 'stitched.mp4' in input_folder.
              3. Optimized for Batch/Massive Analysis.
@@ -260,7 +260,7 @@ class Tracker:
         self.researcher_goal_timer = 0.0
 
     def run_vid(self):
-        print('\nStarting video processing (Headless Mode).....\n')
+        print('\nStarting video processing (STREAM MODE).....\n')
         if self.start_point is None:
             with open(self.save, 'a+') as file:
                 file.write(f"Rat number: {self.rat} , Date: {self.date} \n")
@@ -298,6 +298,14 @@ class Tracker:
             self.annotate_frame(self.disp_frame)
             
             self.out.write(self.disp_frame)
+
+            # --- ADDED FOR STREAMING ---
+            cv2.imshow("Tracker Stream", self.disp_frame)
+            # Press 'q' to quit
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                print("Manual interruption by user.")
+                break
+            # ---------------------------
             
             rat_x = self.pos_centroid[0] if self.pos_centroid else np.nan
             rat_y = self.pos_centroid[1] if self.pos_centroid else np.nan
@@ -348,6 +356,7 @@ class Tracker:
         print("\nTracking process finished in: {:0>2}:{:0>2}:{:05.2f}".format(int(hours), int(minutes), seconds))
         self.cap.release()
         self.out.release() 
+        cv2.destroyAllWindows() # --- ADDED CLEANUP ---
 
     def export_tracking_data(self):
         print("\n>> Compiling tracking data to CSV...")
@@ -786,30 +795,6 @@ class Tracker:
                         self.time_points.append([self.converted_time, node_name])
                     if node_name != self.saved_nodes[(len(self.saved_nodes)) - 2]:
                         self.time_points.append([self.converted_time, node_name])
-
-            cv2.putText(frame, 'Trial:' + str(self.trial_num), (60, 60),
-                        fontFace=FONT, fontScale=0.75, color=(255, 255, 255), thickness=1)
-            cv2.putText(frame, 'Currently writing to file...', (60, 80),
-                        fontFace=FONT, fontScale=0.75, color=(255, 255, 255), thickness=1)
-            cv2.putText(frame, "Rat Count: " + str(self.count_rat), (40, 130),
-                        fontFace=FONT, fontScale=0.65, color=(255, 255, 255), thickness=1)
-            cv2.putText(frame, "Rat-head Count: " + str(self.count_head), (40, 160),
-                        fontFace=FONT, fontScale=0.65, color=(255, 255, 255), thickness=1)
-
-            if len(self.centroid_list) >= 2:
-                for i in range(1, len(self.centroid_list)):
-                    cv2.line(frame, self.centroid_list[i], self.centroid_list[i - 1],
-                             color=(255, 0, 60), thickness=1)
-            cv2.line(frame, (self.pos_centroid[0] - 5, self.pos_centroid[1]),
-                     (self.pos_centroid[0] + 5, self.pos_centroid[1]),
-                     color=(0, 255, 0), thickness=2)
-            cv2.line(frame, (self.pos_centroid[0], self.pos_centroid[1] - 5),
-                     (self.pos_centroid[0], self.pos_centroid[1] + 5),
-                     color=(0, 255, 0), thickness=2)
-
-            start_index = max(0, len(self.saved_nodes) - 50)
-            for i in range(start_index, len(self.saved_nodes)):
-                self.annotate_node(frame, point=self.node_pos[i], node=self.saved_nodes[i], t=2)
 
     def save_to_file(self, fname):
         savelist = []
