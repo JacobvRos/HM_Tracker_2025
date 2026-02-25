@@ -141,14 +141,14 @@ REM 2. SYNC CHECK
 echo.
 echo [STEP 2] Running Sync Script...
 if exist ".\src\Video_LED_Sync_using_ICA.py" (
-REM    python -u ./src/Video_LED_Sync_using_ICA.py -i "%IP%" -o "%OP%" -f %FREQ%
+    python -u ./src/Video_LED_Sync_using_ICA.py -i "%IP%" -o "%OP%" -f %FREQ%
 )
 
 REM 3. STITCH CHECK
 echo.
 echo [STEP 3] Running Stitching...
 if exist ".\src\join_views.py" (
-REM    python -u ./src/join_views.py "%IP%"
+    python -u ./src/join_views.py "%IP%"
 )
 
 REM 4. TRACKER CHECK

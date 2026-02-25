@@ -112,7 +112,8 @@ def get_dio_files(path: Path):
         '*[0-9].dio_Controller_Din1.dat',     # Plan A1 (most common old style)
         '*maze.dio_Controller_Din1.dat',      # Plan A2 (your new request)
         '*aze.dio_MCU_Din1.dat',                # Plan B (new MCU naming)
-        '*[0-9].dio_MCU_Din1.dat'
+        '*[0-9].dio_MCU_Din1.dat',
+        '*[0-9]_hab.dio_Controller_Din1.dat'
     ]
 
     init_files = []
