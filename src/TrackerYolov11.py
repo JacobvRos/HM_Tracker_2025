@@ -109,11 +109,10 @@ class Tracker:
         print("Caching node dictionary...")
         self.nodes_dict = mask.create_node_dict(self.node_list)
 
-        self.start_nodes_locations = self.find_location(self.start_nodes, self.goal)
+        self.start_nodes_locations, self.goal_locations = self.find_location(self.start_nodes, self.goal_nodes)
         print('\n  ________  SUMMARY SESSION  ________  ')
         print('\nPath video file:', self.save_video)
-        print('\nPath .log and .txt files:', self.save)
-        print('\nTotal trials current session:', self.num_trials, '\n\nGoal location node ', self.goal)
+        print('\nTotal trials current session:', self.num_trials)
         
         self.logger = logging.getLogger('')
         self.logger.setLevel(logging.INFO)
@@ -204,8 +203,9 @@ class Tracker:
         self.date = self.metadata['date']
         self.num_trials = self.metadata['num_trials']
         self.goal = self.metadata['goal']
-        self.trial_type = self.metadata['trial_type']
         self.start_nodes = self.metadata['start_nodes_list']
+        self.goal_nodes = self.metadata['goal_nodes_list']
+        self.trial_types = self.metadata['trial_types_list']
         self.special_trials = self.metadata['special_trials_list']
         self.repeat = self.metadata['repeat']
         self.day_num = self.metadata['day']
@@ -425,17 +425,24 @@ class Tracker:
         if points_dist(center_rat, node) < 60:
             self.logger.info('Recording Trial {}'.format(self.trial_num))
             
-            if self.trial_num == 1 and int(self.trial_type) != 1:
+            # Dynamically set this trial's parameters based on the counter
+            current_trial_type = int(self.trial_types[self.counter])
+            self.goal_location = self.goal_locations[self.counter]
+            self.current_goal_name = self.goal_nodes[self.counter]
+            
+            if self.trial_num == 1 and current_trial_type != 1:
                 self.start_time = (self.frame_time / (1000 * 60)) % 60
-                if int(self.trial_type) == 3:
+                if current_trial_type == 3:
                     self.probe = True
-                if int(self.trial_type) == 2:
+                if current_trial_type == 2:
                     self.NGL = True
-            if int(self.trial_type) == 4:
+                    
+            if current_trial_type == 4 or current_trial_type == 5 or current_trial_type == 6:
                 for n in self.special_trials:
                     if int(n) == self.trial_num:
                         self.NGL = True
                         self.start_time = (self.frame_time / (1000 * 60)) % 60
+                        
             if not self.probe and not self.NGL:
                     self.normal_trial = True
 
@@ -452,7 +459,7 @@ class Tracker:
             
             self.pos_centroid = node
             self.centroid_list.append(self.pos_centroid)
-            self.start_trial = False  
+            self.start_trial = False
             
     def check_immunity(self):
         if self.trial_num in self.unnormal_intervals:
@@ -789,7 +796,13 @@ class Tracker:
         self.store_fps.append(fps)
         cv2.putText(frame, "FPS: {:.2f}".format(fps), (970, 650), fontFace=FONT, fontScale=0.75, color=(240, 240, 240),
                     thickness=1)
-        self.annotate_node(frame, point=self.goal_location, node=self.goal, t=3)
+        
+        # Draw the active Goal Node for the current trial
+        if self.counter < len(self.goal_locations):
+            active_goal_loc = self.goal_locations[self.counter]
+            active_goal_name = self.goal_nodes[self.counter]
+            if active_goal_loc is not None:
+                self.annotate_node(frame, point=active_goal_loc, node=active_goal_name, t=3)
         
         if self.start_trial and self.counter < len(self.start_nodes):
             cv2.putText(frame, f'Next trial: {self.trial_num}', (60, 60),
@@ -851,55 +864,54 @@ class Tracker:
             file.write('\n')
         file.close()
 
-    def find_location(self, start_nodes, goal):
+    def find_location(self, start_nodes, goal_nodes):
         nodes_dict = self.nodes_dict
-        start_nodes_locations = []
-        for node_name in nodes_dict:
-            if node_name == str(goal):
-                self.goal_location = nodes_dict[node_name]
+        start_locations = []
+        goal_locations = []
+        
         for node in start_nodes:
-            for node_name in nodes_dict:
-                if node_name == str(node):
-                    start_nodes_locations.append(nodes_dict[node_name])
-        return start_nodes_locations
+            start_locations.append(nodes_dict.get(str(node)))
+            
+        for node in goal_nodes:
+            goal_locations.append(nodes_dict.get(str(node)))
+            
+        return start_locations, goal_locations
 
 # --- DATA LOADER ---
 def parse_metadata_xlsx(xlsx_path):
     print(f"Reading configuration from: {xlsx_path}")
     try:
         df = pd.read_excel(xlsx_path, engine='openpyxl')
-        row0 = df.iloc[0] # Take the first row for scalars
+        row0 = df.iloc[0] 
         
-        # 1. SCALARS (Row 0)
-        # Handle Trial Type safely
-        trial_type = "1"
-        if 'Trial_Type' in row0 and not pd.isna(row0['Trial_Type']):
-             trial_type = safe_int_str(row0['Trial_Type'])
-             
+        # 1. SCALARS
         start_pt = None
         s_min = float(row0.get('Start_Min', 0))
         s_sec = float(row0.get('Start_Sec', 0))
         if s_min > 0 or s_sec > 0:
             start_pt = (s_min * 60) + s_sec
 
-        # 2. LISTS (Scan columns)
-        
-        # Start Nodes
+        # 2. LISTS (Scan columns for per-trial data)
         s_nodes = []
         if 'Start_Nodes' in df.columns:
             s_nodes = df['Start_Nodes'].dropna().astype(int).tolist()
+            
+        g_nodes = []
+        if 'Goal_Node' in df.columns:
+            g_nodes = df['Goal_Node'].dropna().astype(int).tolist()
+            
+        t_types = []
+        if 'Trial_Type' in df.columns:
+            t_types = df['Trial_Type'].dropna().astype(int).tolist()
 
-        # Special Trials
         sp_trials = []
         if 'Special_Trials' in df.columns:
              sp_trials = df['Special_Trials'].dropna().astype(int).tolist()
 
-        # Unnormal Intervals
         un_dict = {}
         if 'Unnormal_Intervals' in df.columns:
             un_list = df['Unnormal_Intervals'].dropna().astype(str).tolist()
             for item in un_list:
-                # Format: "Trial:Start-End" (e.g. "1:0-5")
                 item = item.strip()
                 if ":" in item and "-" in item:
                     parts = item.split(":")
@@ -908,7 +920,7 @@ def parse_metadata_xlsx(xlsx_path):
                         times = parts[1].split("-")
                         un_dict[t_num] = (float(times[0]), float(times[1]))
                     except ValueError:
-                        print(f"Warning: Could not parse unnormal interval '{item}'")
+                        pass
 
         metadata = {
             'start_point': start_pt,
@@ -919,19 +931,15 @@ def parse_metadata_xlsx(xlsx_path):
             'day': safe_int_str(row0['Day']),
             'session': safe_int_str(row0['Session']),
             'num_trials': safe_int_str(row0['Num_Trials']),
-            'goal': safe_int_str(row0['Goal_Node']),
-            'prev_goal': safe_int_str(row0.get('Prev_Goal_Node', 'N/A')),
-            'trial_type': trial_type,
             'start_nodes_list': s_nodes,
+            'goal_nodes_list': g_nodes,
+            'trial_types_list': t_types,
             'special_trials_list': sp_trials,
             'unnormal_intervals': un_dict
         }
-        
         return metadata
-
     except Exception as e:
         print(f"Error parsing Excel file: {e}")
-        # Allow the caller to handle this or exit gracefully
         raise e
 
 # --- MAIN ---
