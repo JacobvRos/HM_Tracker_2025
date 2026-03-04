@@ -202,10 +202,13 @@ class Tracker:
         self.rat = self.metadata['rat']
         self.date = self.metadata['date']
         self.num_trials = self.metadata['num_trials']
-        self.goal = self.metadata['goal']
+        
+        # --- NEW DYNAMIC LISTS ---
         self.start_nodes = self.metadata['start_nodes_list']
         self.goal_nodes = self.metadata['goal_nodes_list']
         self.trial_types = self.metadata['trial_types_list']
+        # -------------------------
+        
         self.special_trials = self.metadata['special_trials_list']
         self.repeat = self.metadata['repeat']
         self.day_num = self.metadata['day']
