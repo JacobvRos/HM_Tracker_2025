@@ -795,7 +795,13 @@ class Tracker:
         
         cv2.putText(frame, str(self.converted_time), (970, 670),
                     fontFace=FONT, fontScale=0.75, color=(240, 240, 240), thickness=1)
-        fps = 1. / (time.time() - self.t1) 
+        
+        # --- FIXED FPS CALCULATION ---
+        time_diff = time.time() - self.t1
+        # Prevent division by zero by using a tiny minimum value (0.001 seconds)
+        fps = 1.0 / max(time_diff, 0.001) 
+        # -----------------------------
+        
         self.store_fps.append(fps)
         cv2.putText(frame, "FPS: {:.2f}".format(fps), (970, 650), fontFace=FONT, fontScale=0.75, color=(240, 240, 240),
                     thickness=1)

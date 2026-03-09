@@ -12,7 +12,7 @@ set MAX_GPU=90
 set WAIT_SECONDS=10
 
 :: Paths
-set "ONNX_WEIGHTS_PATH=C:\Users\gl_pc\Desktop\data\yolov/best_s_1280.pt"
+set "ONNX_WEIGHTS_PATH=C:\Users\gl_pc\Desktop\data\yolov/bests_1280_mosiac_close.pt"
 set "TRODES_EXPORT_CMD=C:\Users\gl_pc\Desktop\Trodes_2-8-0_Windows11\trodesexport.exe"
 set FREQ=30000
 
