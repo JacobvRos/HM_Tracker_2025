@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 
 :: ========================================================
-::               CONFIGURATION (SHARED)
+::                CONFIGURATION (SHARED)
 :: ========================================================
 cd /d "%~dp0"
 
@@ -12,19 +12,22 @@ set MAX_GPU=90
 set WAIT_SECONDS=10
 
 :: Paths
-set "ONNX_WEIGHTS_PATH=C:\Users\gl_pc\Desktop\track\yolov3_training_best.onnx"
-set "TRODES_EXPORT_CMD=C:\Users\gl_pc\Desktop\track\trodes\trodesexport.exe"
+set "ONNX_WEIGHTS_PATH=C:\Users\gl_pc\Desktop\data\yolov/bests_1280_mosiac_close.pt"
+set "TRODES_EXPORT_CMD=C:\Users\gl_pc\Desktop\Trodes_2-8-0_Windows11\trodesexport.exe"
 set FREQ=30000
 
 :: ========================================================
-::           MODE CHECK: MASTER OR WORKER?
+::            MODE CHECK: MASTER OR WORKER?
 :: ========================================================
-if "%~1"==":WORKER" goto :WORKER_ROUTINE
+:: If a 4th argument exists, it's the user's selection passed from Master
+if "%~1"==":WORKER" (
+    set "STEPS_TO_RUN=%~4"
+    goto :WORKER_ROUTINE
+)
 
 echo ========================================================
-echo          SMART PARALLEL DEBUG MODE (Resource Aware)
+echo           SMART PARALLEL MODE (Multi-Step)
 echo ========================================================
-:: FIXED LINE BELOW: Added ^ before |
 echo [CONFIG] Max CPU: %MAX_CPU%%% ^| Max GPU: %MAX_GPU%%%
 echo.
 
@@ -33,6 +36,17 @@ if "%~1"=="" (
     echo Usage: runner_windows.bat "path_to_data_folder"
     exit /b 1
 )
+
+:: --- NEW: STEP SELECTION MENU ---
+echo Select steps to run (e.g., 123 for steps 1, 2, and 3):
+echo [1] Trodes Export
+echo [2] Sync Script
+echo [3] Stitching
+echo [4] Tracker
+echo [5] Plotting
+echo [6] Compression
+echo.
+set /p "MY_SELECTION=Enter steps: "
 
 pushd "%~1"
 set "ROOT_DIR=%CD%"
@@ -49,38 +63,31 @@ for /d %%D in ("%ROOT_DIR%\ip*") do (
     set "OP_PATH=%ROOT_DIR%\op!NUM!"
 
     if exist "!OP_PATH!\" (
-        
         echo.
-        echo [QUEUE] Preparing to launch: !DIR_NAME!
+        echo [QUEUE] Preparing: !DIR_NAME!
         
-        :: >>> RESOURCE CHECK BEFORE LAUNCH <<<
         call :WAIT_FOR_RESOURCES
         
         set /a count+=1
-        echo [LAUNCH] System clear. Spawning worker for !DIR_NAME!
-        start "Job-!DIR_NAME!" cmd /k call "%~f0" :WORKER "!IP_PATH!" "!OP_PATH!"
+        :: Pass the %MY_SELECTION% as the 4th parameter to the worker
+        start "Job-!DIR_NAME!" cmd /k call "%~f0" :WORKER "!IP_PATH!" "!OP_PATH!" "%MY_SELECTION%"
         
-        :: Small safety buffer to let the new process register its load
         timeout /t 3 /nobreak >nul
-        
-    ) else (
-        echo [SKIP] !OP_PATH! does not exist.
     )
 )
 
 echo.
 echo ========================================================
-echo [MASTER] Launched !count! jobs.
+echo [MASTER] Launched !count! jobs with steps: %MY_SELECTION%
 echo ========================================================
 pause
 exit /b
 
 :: ========================================================
-::            RESOURCE MONITOR SUBROUTINE
+::             RESOURCE MONITOR SUBROUTINE
 :: ========================================================
 :WAIT_FOR_RESOURCES
 :CHECK_AGAIN
-    :: 1. GET CPU LOAD
     set CPU_LOAD=0
     for /f "skip=1" %%P in ('wmic cpu get loadpercentage') do (
         if "%%P" neq "" set CPU_LOAD=%%P
@@ -88,35 +95,29 @@ exit /b
     )
     :break_cpu
 
-    :: 2. GET GPU LOAD (Requires nvidia-smi)
     set GPU_LOAD=0
     nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits > gpu_temp.txt 2>nul
     if exist gpu_temp.txt (
         set /p GPU_LOAD=<gpu_temp.txt
         del gpu_temp.txt
     )
-    
-    :: Handle case where GPU might return multiple lines or empty
     if "%GPU_LOAD%"=="" set GPU_LOAD=0
 
-    :: 3. COMPARE
     if !CPU_LOAD! GTR %MAX_CPU% (
-        echo    [WAIT] High CPU Load: !CPU_LOAD!%%. Pausing %WAIT_SECONDS%s...
+        echo     [WAIT] High CPU: !CPU_LOAD!%%. Pausing...
         timeout /t %WAIT_SECONDS% /nobreak >nul
         goto :CHECK_AGAIN
     )
-
     if !GPU_LOAD! GTR %MAX_GPU% (
-        echo    [WAIT] High GPU Load: !GPU_LOAD!%%. Pausing %WAIT_SECONDS%s...
+        echo     [WAIT] High GPU: !GPU_LOAD!%%. Pausing...
         timeout /t %WAIT_SECONDS% /nobreak >nul
         goto :CHECK_AGAIN
     )
-
-    echo    [CHECK] CPU: !CPU_LOAD!%% ^| GPU: !GPU_LOAD!%% - OK.
+    echo     [CHECK] CPU: !CPU_LOAD!%% ^| GPU: !GPU_LOAD!%% - OK.
 exit /b
 
 :: ========================================================
-::               THE WORKER SUBROUTINE
+::                THE WORKER SUBROUTINE
 :: ========================================================
 :WORKER_ROUTINE
 set "IP=%~2"
@@ -124,78 +125,65 @@ set "OP=%~3"
 color 0A 
 
 echo.
-echo ^> ^> ^> WORKER STARTED ^< ^< ^<
-echo [INFO] IP: %IP%
-echo [INFO] OP: %OP%
+echo [INFO] Running steps [%STEPS_TO_RUN%] for !IP!
 
-REM 1. TRODES CHECK
-echo.
-echo [STEP 1] Running Trodes...
-if exist "%TRODES_EXPORT_CMD%" (
-    for %%F in ("%IP%\*.rec") do (
-        "%TRODES_EXPORT_CMD%" -dio -rec "%%F"
+:: --- STEP 1 ---
+echo %STEPS_TO_RUN% | findstr "1" >nul
+if %errorlevel% equ 0 (
+    echo [STEP 1] Running Trodes...
+    if exist "%TRODES_EXPORT_CMD%" (
+        for %%F in ("%IP%\*.rec") do ("%TRODES_EXPORT_CMD%" -dio -rec "%%F")
     )
 )
 
-REM 2. SYNC CHECK
-echo.
-echo [STEP 2] Running Sync Script...
-if exist ".\src\Video_LED_Sync_using_ICA.py" (
-    python -u ./src/Video_LED_Sync_using_ICA.py -i "%IP%" -o "%OP%" -f %FREQ%
-)
-
-REM 3. STITCH CHECK
-echo.
-echo [STEP 3] Running Stitching...
-if exist ".\src\join_views.py" (
-    python -u ./src/join_views.py "%IP%"
-)
-
-REM 4. TRACKER CHECK
-echo.
-echo [STEP 4] Running Tracker...
-if exist "%IP%\stitched.mp4" (
-    if exist ".\src\TrackerYolov.py" (
-        python -u ./src/TrackerYolov.py --input_folder "%IP%" --output_folder "%OP%" --onnx_weight "%ONNX_WEIGHTS_PATH%"
+:: --- STEP 2 ---
+echo %STEPS_TO_RUN% | findstr "2" >nul
+if %errorlevel% equ 0 (
+    echo [STEP 2] Running Sync Script...
+    if exist ".\src\Video_LED_Sync_using_ICA.py" (
+        python -u ./src/Video_LED_Sync_using_ICA.py -i "%IP%" -o "%OP%" -f %FREQ%
     )
 )
 
-REM 5. PLOT CHECK
-echo.
-echo [STEP 5] Running Plotting...
-if exist "plot_trials.py" (
-    python -u ./src/plot_trials.py -o "%OP%"
+:: --- STEP 3 ---
+echo %STEPS_TO_RUN% | findstr "3" >nul
+if %errorlevel% equ 0 (
+    echo [STEP 3] Running Stitching...
+    if exist ".\src\join_views.py" (
+        python -u ./src/join_views.py "%IP%"
+    )
 )
 
-REM 6. COMPRESS CHECK (AUTOMATED)
-echo.
-echo [STEP 6] Running Compression...
-set "VIDEO_FILE="
-
-REM Look for the first MP4 file in the output directory
-for %%f in ("%OP%\*.mp4") do (
-    set "VIDEO_FILE=%%~f"
-    goto :FOUND_VIDEO
+:: --- STEP 4 ---
+echo %STEPS_TO_RUN% | findstr "4" >nul
+if %errorlevel% equ 0 (
+    echo [STEP 4] Running Tracker...
+    if exist "%IP%\stitched.mp4" (
+        python -u ./src/TrackerYolov11.py --input_folder "%IP%" --output_folder "%OP%" --onnx_weight "%ONNX_WEIGHTS_PATH%"
+    )
 )
 
-:FOUND_VIDEO
-if "!VIDEO_FILE!"=="" (
-    echo [INFO] No MP4 video found in "%OP%". Skipping compression.
-) else (
-    echo [INFO] Found video: "!VIDEO_FILE!"
-    echo [INFO] Compressing (CRF 28) and overwriting original...
+:: --- STEP 5 ---
+echo %STEPS_TO_RUN% | findstr "5" >nul
+if %errorlevel% equ 0 (
+    echo [STEP 5] Running Plotting...
+    if exist ".\src\plot_trials.py" (
+        python -u ./src/plot_trials.py -o "%OP%"
+    )
+)
 
-    set "TEMP_FILE=%OP%\__temp_compressed.mp4"
-
-    REM ffmpeg -y (overwrite output) -i input ... output
-    ffmpeg -y -v error -i "!VIDEO_FILE!" -vcodec libx264 -crf 28 "!TEMP_FILE!"
-
-    if exist "!TEMP_FILE!" (
-        REM Overwrite original with compressed version
-        move /Y "!TEMP_FILE!" "!VIDEO_FILE!" >nul
-        echo [SUCCESS] Video compressed and overwritten.
-    ) else (
-        echo [ERROR] ffmpeg failed to create output file.
+:: --- STEP 6 ---
+echo %STEPS_TO_RUN% | findstr "6" >nul
+if %errorlevel% equ 0 (
+    echo [STEP 6] Running Compression...
+    set "VIDEO_FILE="
+    for %%f in ("%OP%\*.mp4") do (set "VIDEO_FILE=%%~f" & goto :FOUND_VIDEO)
+    :FOUND_VIDEO
+    if not "!VIDEO_FILE!"=="" (
+        set "TEMP_FILE=%OP%\__temp_compressed.mp4"
+        ffmpeg -y -v error -i "!VIDEO_FILE!" -vcodec libx264 -crf 28 "!TEMP_FILE!"
+        if exist "!TEMP_FILE!" move /Y "!TEMP_FILE!" "!VIDEO_FILE!" >nul
+        echo [SUCCESS] Video compressed.
     )
 )
 
