@@ -257,7 +257,7 @@ class Tracker:
         self.locked_to_head = False   
         self.start_node_center = None
         self.covering_start_node = False
-        self.cover_required_time = 1
+        self.cover_required_time = 20
         self.start_node_radius = 20
         self.goal_node_radius = 25
         self.save = '{}/{}_{}'.format(out, str(self.date), 'Rat' + self.rat + '.txt') 
@@ -567,7 +567,7 @@ class Tracker:
             dist = points_dist(active_rat_pos, self.Researcher)
 
             if (not self.start_trial and not self.end_session and 
-                not self.record_detections and dist <= 800): 
+                not self.record_detections and dist <= 80): 
                 
                 self.start_trial = True
                 self.trial_num += 1
@@ -620,7 +620,7 @@ class Tracker:
                 if allow_end:
                     self.researcher_goal_timer += (1.0 / self.vid_fps)
                     
-                    if self.researcher_goal_timer >= 10.0:
+                    if self.researcher_goal_timer >= 30.0:
                         self.normal_trial = False
                         self.NGL = False
                         self.probe = False
