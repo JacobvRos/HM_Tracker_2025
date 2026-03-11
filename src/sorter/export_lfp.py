@@ -6,6 +6,8 @@ import shutil
 import spikeinterface.full as si
 import spikeinterface.preprocessing as spre
 import probeinterface as pi
+import gc
+
 
 try:
     from readTrodesExtractedDataFile3 import readTrodesExtractedDataFile
@@ -31,11 +33,21 @@ def extract_lfp_and_sort(file_path, output_parent, target_fs=1000.0):
 
     # 3. DYNAMIC PROBE (Fixes the 128 vs 76 error)
     # We create a simple linear probe with the detected number of channels
+    print("Configuring probe geometry...")
+    
+    # Dynamically get the number of channels from the recording
+    num_channels = rec.get_num_channels()
+    
+    # Create the probe based on the actual channel count
     probe = pi.Probe(ndim=2, si_units='um')
     positions = np.zeros((num_channels, 2))
     positions[:, 1] = np.arange(num_channels) * 20  # 20um spacing
     probe.set_contacts(positions=positions, shapes='circle', shape_params={'radius': 5})
+    
+    # This is the crucial line: it generates indices from 0 to 75 (for 76 channels)
     probe.set_device_channel_indices(np.arange(num_channels))
+    
+    # Attach the dynamic probe
     rec = rec.set_probe(probe)
 
     # --- STEP A: LFP EXTRACTION ---
@@ -46,18 +58,42 @@ def extract_lfp_and_sort(file_path, output_parent, target_fs=1000.0):
     decimation_factor = int(fs_orig / target_fs) 
     rec_lfp = spre.decimate(rec_filtered, decimation_factor=decimation_factor)
     
-    print("Extracting LFP traces to Numpy...")
-    lfp_data = rec_lfp.get_traces()
+    print("Extracting LFP traces in parallel (this will be much faster)...")
+    
+    # Define multiprocessing parameters (uses all available cores, 1-second chunks)
+    # Set n_jobs to 1 to avoid Windows pickling errors with in-memory arrays.
+    # The 1-second chunking will still keep memory usage low and prevent freezing.
+    job_kwargs = dict(n_jobs=1, chunk_duration='1s', progress_bar=True)
+    
+    # Create a temporary directory for the parallel cache
+    temp_cache_dir = output_dir / "temp_si_cache"
+    if temp_cache_dir.exists():
+        shutil.rmtree(temp_cache_dir)
+        
+    # Force parallel evaluation by saving to a temporary binary format
+    rec_lfp_cached = rec_lfp.save(folder=temp_cache_dir, format="binary", **job_kwargs)
+    
+    print("Writing processed LFP to Numpy arrays...")
+    # Because it's already processed and cached, get_traces() is now nearly instant
+    lfp_data = rec_lfp_cached.get_traces()
     lfp_timestamps = np.arange(lfp_data.shape[0]) / (fs_orig / decimation_factor)
     
     np.save(output_dir / "lfp_data.npy", lfp_data.astype('float32'))
     np.save(output_dir / "lfp_timestamps.npy", lfp_timestamps.astype('float64'))
     np.save(output_dir / "lfp_channels.npy", np.arange(num_channels))
+    
+    # 1. Delete the cached object so SpikeInterface closes the file handle
+    del rec_lfp_cached
+    # 2. Force Python's garbage collector to clean up the memory map
+    gc.collect()
+    
+    # 3. Clean up the temporary cache safely
+    try:
+        shutil.rmtree(temp_cache_dir)
+    except PermissionError:
+        print(f"Warning: Windows locked {temp_cache_dir}. You can delete this manually later.")
+        
     print(f"LFP files saved to {output_dir}")
-
-    # --- STEP B: SPIKE SORTING (Optional/Integration) ---
-    # If you want to continue to sorting with this dynamic probe, 
-    # you can insert your Mountainsort4 logic here using 'rec'.
 
 def run_pipeline(input_folder, output_folder):
     base_path = Path(input_folder)

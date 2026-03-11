@@ -894,12 +894,26 @@ if __name__ == "__main__":
         red_ica_list.append(red_ica_out)
         blue_ica_list.append(blue_ica_out)
         print("=================")
+    # UPDATED LOGIC END
+
+    # --- NEW CLEANUP LOGIC AT THE END ---
     temp_dir = Path(args.input_path).resolve() / "temp_no_led"
     if temp_dir.exists():
-        print(f"Moving files back from {temp_dir} to {args.input_path}")
+        print(f"Moving files back from {temp_dir} to {args.input_path}...")
         for f in temp_dir.iterdir():
             target = Path(args.input_path).resolve() / f.name
             shutil.move(str(f), str(target))
+        
+        # Remove the now-empty temp folder
+        try:
+            temp_dir.rmdir()
+            print("Cleaned up and removed 'temp_no_led' folder.")
+        except OSError as e:
+            print(f"Could not remove 'temp_no_led' folder (it might not be empty): {e}")
+
+    # To visualise the gpu and cpu timestamps difference
+    # Check this function definition above
+    # vis_gpu_cpu_ts()
 
 
     # for item in blue_ica_list:

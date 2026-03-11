@@ -48,7 +48,7 @@ echo [5] Plotting
 echo [6] Compression
 echo [7] Sorting
 echo [8] LFP
-echo [d] LFP
+echo [d] deeplabcut 
 echo [9] Cleaning
 echo.
 set /p "MY_SELECTION=Enter steps: "
@@ -180,18 +180,34 @@ if %errorlevel% equ 0 (
 :: --- STEP 6 ---
 echo %STEPS_TO_RUN% | findstr "6" >nul
 if %errorlevel% equ 0 (
-    echo [STEP 6] Running Compression...
+    echo [STEP 6] Running Compression - GPU Accelerated...
     set "VIDEO_FILE="
-    for %%f in ("%OP%\*.mp4") do (set "VIDEO_FILE=%%~f" & goto :FOUND_VIDEO)
-    :FOUND_VIDEO
+    set "TEMP_FILE=!OP!\__temp_compressed.mp4"
+    
+    :: Clean up any leftover temp files from previous crashed runs
+    if exist "!TEMP_FILE!" del /q "!TEMP_FILE!"
+    
+    :: Safely grab the first .mp4 found that is NOT the temp file
+    for %%f in ("!OP!\*.mp4") do (
+        if "!VIDEO_FILE!"=="" (
+            if /I not "%%~nxf"=="__temp_compressed.mp4" set "VIDEO_FILE=%%~f"
+        )
+    )
+    
     if not "!VIDEO_FILE!"=="" (
-        set "TEMP_FILE=%OP%\__temp_compressed.mp4"
-        
-        :: CHANGED LINE BELOW to use %FFMPEG_CMD%
-        "%FFMPEG_CMD%" -y -v error -i "!VIDEO_FILE!" -vcodec libx264 -crf 28 "!TEMP_FILE!"
-        
-        if exist "!TEMP_FILE!" move /Y "!TEMP_FILE!" "!VIDEO_FILE!" >nul
-        echo [SUCCESS] Video compressed.
+        :: Added -hide_banner -loglevel warning -stats to show the live progress line
+        "%FFMPEG_CMD%" -nostdin -y -hide_banner -loglevel warning -stats -i "!VIDEO_FILE!" -c:v h264_nvenc -preset p6 -cq 28 -c:a copy "!TEMP_FILE!" && (
+            echo.
+            move /Y "!TEMP_FILE!" "!VIDEO_FILE!" >nul
+            echo [SUCCESS] Video compressed using GPU: !VIDEO_FILE!
+        ) || (
+            echo.
+            echo [ERROR] FFmpeg compression failed for !VIDEO_FILE!
+            echo         Check for NVENC concurrent session limits or GPU memory issues.
+            if exist "!TEMP_FILE!" del /q "!TEMP_FILE!"
+        )
+    ) else (
+        echo [WARNING] No valid .mp4 file found in "!OP!" to compress.
     )
 )
 
@@ -215,11 +231,27 @@ if %errorlevel% equ 0 (
 
 )
 
+:: --- STEP d ---
+echo %STEPS_TO_RUN% | findstr "d" >nul
+if %errorlevel% equ 0 (
+    echo [STEP d] Exporting video for DeepLabCut...
+    if exist ".\src\dlc\tracking_eyes.py" (
+        python -u ./src/dlc/tracking_eyes.py --input_folder "%IP%" --output_folder "%OP%"
+    )
 
+)
 
-python -u ./src/sorter/sorting.py --input_folder "C:\Users\gl_pc\Desktop\data\yolov\error\ip4" --output_folder "C:\Users\gl_pc\Desktop\data\yolov\error\op4"
-
-
+:: --- STEP 9 ---
+echo %STEPS_TO_RUN% | findstr "9" >nul
+if %errorlevel% equ 0 (
+    echo [STEP 9] Cleaning up .DIO, .raw, and timestampoffset folders...
+    for /d %%D in ("%IP%\*.DIO" "%IP%\*.raw" "%IP%\*timestampoffset*") do (
+        if exist "%%D" (
+            echo Deleting folder: %%~nxD
+            rmdir /s /q "%%D"
+        )
+    )
+)
 
 echo.
 echo [COMPLETE] Worker finished.

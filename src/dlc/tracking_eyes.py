@@ -6,7 +6,7 @@ import argparse
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 
 def add_region_column(
     df: pd.DataFrame,
@@ -44,20 +44,38 @@ def find_video_for_region(region_idd: int | str, video_dir: Path) -> Optional[Pa
     matches = sorted(video_dir.rglob(pattern), key=lambda p: _natural_key(p.name))
     return matches[0] if matches else None
 
-def extract_frame_from_video(video_path: Path, frame_idx: int) -> Tuple[bool, Optional[np.ndarray], Optional[str]]:
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        return False, None, f"Could not open video: {video_path}"
-    
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    if frame_idx < 0 or frame_idx >= total_frames:
-        cap.release()
-        return False, None, f"Frame {frame_idx} out of range for {video_path.name}"
+class FastVideoReader:
+    """Caches VideoCapture objects to prevent reopening files continuously."""
+    def __init__(self):
+        self.caps: Dict[Path, cv2.VideoCapture] = {}
+        self.current_frame_idx: Dict[Path, int] = {}
 
-    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-    ok, frame = cap.read()
-    cap.release()
-    return ok, frame, None if ok else f"Read error on frame {frame_idx}"
+    def get_frame(self, video_path: Path, frame_idx: int) -> Tuple[bool, Optional[np.ndarray], Optional[str]]:
+        if video_path not in self.caps:
+            cap = cv2.VideoCapture(str(video_path))
+            if not cap.isOpened():
+                return False, None, f"Could not open video: {video_path}"
+            self.caps[video_path] = cap
+            self.current_frame_idx[video_path] = 0
+
+        cap = self.caps[video_path]
+        current_idx = self.current_frame_idx[video_path]
+
+        # Only use cap.set() if we are jumping around. 
+        # If we just need the very next frame, reading sequentially is much faster.
+        if frame_idx != current_idx:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+
+        ok, frame = cap.read()
+        if ok:
+            self.current_frame_idx[video_path] = frame_idx + 1
+            return True, frame, None
+        else:
+            return False, None, f"Read error on frame {frame_idx}"
+
+    def release_all(self):
+        for cap in self.caps.values():
+            cap.release()
 
 def process_tracking_data(
     input_dir: str, 
@@ -66,9 +84,6 @@ def process_tracking_data(
     fps: float = 30.0,
     show_stream: bool = True
 ):
-    """
-    Main logic to process coordinates from CSV and compile frames from multiple videos.
-    """
     ip_path = Path(input_dir)
     op_path = Path(output_dir)
     op_path.mkdir(parents=True, exist_ok=True)
@@ -87,6 +102,16 @@ def process_tracking_data(
     df = pd.read_csv(csv_file)
     df = add_region_column(df)
     
+    # --- OPTIMIZATION 1: Pre-map regions to video files ---
+    print("Pre-mapping video paths...")
+    unique_regions = df['region_id'].dropna().unique()
+    region_to_video = {}
+    for region in unique_regions:
+        region_to_video[region] = find_video_for_region(region, ip_path)
+    
+    # --- OPTIMIZATION 2: Initialize the FastVideoReader ---
+    video_reader = FastVideoReader()
+
     output_vid_path = op_path / "collected_frames.mp4"
     writer = None
     target_size = None
@@ -98,21 +123,21 @@ def process_tracking_data(
         if pd.isna(region_id):
             continue
 
-        video_path = find_video_for_region(int(region_id), ip_path)
+        # Look up the video instantly from our pre-mapped dictionary
+        video_path = region_to_video.get(region_id)
         if not video_path:
             errors.append(f"Row {row_idx}: No video for region {region_id}")
             continue
 
-        ok, frame, err = extract_frame_from_video(video_path, int(row_idx))
+        # Fetch frame using our cached reader
+        ok, frame, err = video_reader.get_frame(video_path, int(row_idx))
         if not ok:
             errors.append(f"Row {row_idx}: {err}")
             continue
 
-        # Flip if it's the bottom row of regions
         if int(region_id) > 5:
             frame = cv2.flip(frame, 0)
 
-        # Initialize VideoWriter
         if writer is None:
             h, w = frame.shape[:2]
             target_size = (w, h)
@@ -130,21 +155,27 @@ def process_tracking_data(
                 print("\nInterrupted by user.")
                 break
 
-        # Progress bar
-        sys.stdout.write(f"\rProgress: [{'#' * (int(i/total_rows*20))}{'-' * (20-int(i/total_rows*20))}] {i}/{total_rows}")
-        sys.stdout.flush()
+        # Progress bar (updated less frequently to save terminal overhead)
+        if i % 10 == 0 or i == total_rows:
+            progress = int(i / total_rows * 20)
+            sys.stdout.write(f"\rProgress: [{'#' * progress}{'-' * (20 - progress)}] {i}/{total_rows}")
+            sys.stdout.flush()
 
+    # Clean up
     if writer:
         writer.release()
+    video_reader.release_all()
     cv2.destroyAllWindows()
+    
     print(f"\n\nProcessing Complete. Video saved to: {output_vid_path}")
     if errors:
-        print(f"Encountered {len(errors)} errors. Check logs if needed.")
+        print(f"Encountered {len(errors)} errors. (Showing first 5)")
+        for e in errors[:5]: print(e)
 
 def main():
     parser = argparse.ArgumentParser(description="Compile video frames based on tracking regions.")
-    parser.add_argument("--input", "-i", required=True, help="Directory containing source videos")
-    parser.add_argument("--output", "-o", required=True, help="Directory for output video and CSV search")
+    parser.add_argument("--input_folder", "-i", required=True, help="Directory containing source videos")
+    parser.add_argument("--output_folder", "-o", required=True, help="Directory for output video and CSV search")
     parser.add_argument("--csv", "-c", help="Specific path to tracking CSV (optional)")
     parser.add_argument("--fps", type=float, default=30.0, help="Output video FPS (default: 30)")
     parser.add_argument("--no-vis", action="store_false", dest="show_stream", help="Disable real-time video preview")
@@ -152,7 +183,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        process_tracking_data(args.input, args.output, args.csv, args.fps, args.show_stream)
+        process_tracking_data(args.input_folder, args.output_folder, args.csv, args.fps, args.show_stream)
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)
