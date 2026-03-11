@@ -214,6 +214,9 @@ class Tracker:
         self.repeat = self.metadata['repeat']
         self.day_num = self.metadata['day']
         self.session_num = self.metadata['session']
+        # Inside load_session
+        self.status_message = ""
+        self.message_end_time = 0  # To track when to stop showing the message
 
         self.node_list = str(nl)
         self.cap = cv2.VideoCapture(str(vp))
@@ -227,6 +230,9 @@ class Tracker:
         self.disp_frame = None
         self.pos_centroid = None 
         self.center_researcher = None
+        # Inside load_session
+        self.last_trial_end_time = -1e9  # Initialize with a very small number
+        self.lockout_duration_ms = 10 * 60 * 1000  # 10 minutes in milliseconds
         
         self.last_rat_pos = None         
         self.last_researcher_pos = None 
@@ -257,7 +263,7 @@ class Tracker:
         self.locked_to_head = False   
         self.start_node_center = None
         self.covering_start_node = False
-        self.cover_required_time = 20
+        self.cover_required_time = 10
         self.start_node_radius = 20
         self.goal_node_radius = 25
         self.save = '{}/{}_{}'.format(out, str(self.date), 'Rat' + self.rat + '.txt') 
@@ -441,14 +447,14 @@ class Tracker:
                 if current_trial_type == 2:
                     self.NGL = True
                     
-            if current_trial_type == 4 or current_trial_type == 5 or current_trial_type == 6:
-                for n in self.special_trials:
-                    if int(n) == self.trial_num:
-                        self.NGL = True
-                        self.start_time = (self.frame_time / (1000 * 60)) % 60
-                        
+            # --- FIX 2: Special_Trials dependency removed ---
+            if current_trial_type in [4, 5, 6]:
+                self.NGL = True
+                self.start_time = (self.frame_time / (1000 * 60)) % 60
+            # ------------------------------------------------
+                    
             if not self.probe and not self.NGL:
-                    self.normal_trial = True
+                self.normal_trial = True
 
             self.node_pos = []
             self.centroid_list = []
@@ -559,18 +565,40 @@ class Tracker:
                 self.reached = False
                 self.end_trial()
                 self.start_trial = True  
-                self.trial_num += 1      
+                #self.trial_num += 1      
                 self.check = False       
                 return
 
+        # --- REVISED RESEARCHER TRIGGER LOGIC ---
         if self.Researcher and active_rat_pos and not self.record_detections:
             dist = points_dist(active_rat_pos, self.Researcher)
 
+            # Define which trials require the 10-minute wait
+            # We check the CURRENT trial_num because that is the trial we are WAITING to start
+            is_special_lockout = self.trial_num in [4, 5, 6]
+            time_since_last_trial = self.frame_time - self.last_trial_end_time
+            
+            can_trigger = True
+            if is_special_lockout:
+                if time_since_last_trial < self.lockout_duration_ms:
+                    can_trigger = False
+                    # Visual feedback for the lockout
+                    remaining_sec = int((self.lockout_duration_ms - time_since_last_trial) / 1000)
+                    cv2.putText(self.disp_frame, f"LOCKOUT: {remaining_sec}s", (60, 110), 
+                                font, 1, (0, 0, 255), 2)
+                else:
+                    # Timer passed, researcher can now trigger
+                    cv2.putText(self.disp_frame, "READY: Researcher can start trial", (60, 110), 
+                                font, 1, (0, 255, 0), 2)
+
+            # Only trigger if within distance AND (not special OR timer passed)
             if (not self.start_trial and not self.end_session and 
-                not self.record_detections and dist <= 80): 
+                not self.record_detections and dist <= 80 and can_trigger): 
                 
+                print(f">>> Lockout finished/not required. Starting Trial {self.trial_num}")
                 self.start_trial = True
-                self.trial_num += 1
+                # REMOVED: self.trial_num += 1 (This should be handled carefully)
+                # Ensure trial_num matches your counter logic
                 self.check = False
 
         if active_rat_pos:
@@ -650,7 +678,7 @@ class Tracker:
 
                 if self.cover_start_timer >= self.cover_required_time:
                     self.start_trial = True
-                    self.trial_num += 1
+                    #self.trial_num += 1
                     self.check = False
                     self.covering_start_node = False
                     self.cover_start_timer = 0.0
@@ -702,22 +730,26 @@ class Tracker:
         self.pos_centroid = self.goal_location
         self.centroid_list.append(self.pos_centroid)
         self.annotate_frame(self.disp_frame)
-        if self.saved_nodes:
-            self.logger.info(
-                f'{self.converted_time} : The rat position is: {self.pos_centroid} @ {self.saved_nodes[-1]}')
-        else:
-            self.logger.info(
-                f'{self.converted_time} : The rat position is: {self.pos_centroid}') 
+        
+        # ... existing logging logic ...
+
         self.calculate_velocity(self.time_points)
         self.save_to_file(self.save)
-
+        self.last_trial_end_time = self.frame_time 
+        
+        # Move to the next index in your metadata lists
         self.counter += 1 
-
-        if self.counter == int(self.num_trials):
+        
+        # Only increment trial_num if we haven't finished the session
+        if self.counter < int(self.num_trials):
+            self.trial_num += 1 
+        else:
             self.end_session = True
+
         self.record_detections = False
         self.count_rat = 0
         self.count_head = 0
+
 
     def timer(self, start):
         end = (self.frame_time / (1000 * 60)) % 60

@@ -12,6 +12,7 @@ set MAX_GPU=90
 set WAIT_SECONDS=10
 
 :: Paths
+set "FFMPEG_CMD=C:\Users\gl_pc\Desktop\code\ffmpeg-2026-03-09-git-9b7439c31b-full_build\bin\ffmpeg.exe"
 set "ONNX_WEIGHTS_PATH=C:\Users\gl_pc\Desktop\data\yolov/bests_1280_mosiac_close.pt"
 set "TRODES_EXPORT_CMD=C:\Users\gl_pc\Desktop\Trodes_2-8-0_Windows11\trodesexport.exe"
 set FREQ=30000
@@ -45,6 +46,10 @@ echo [3] Stitching
 echo [4] Tracker
 echo [5] Plotting
 echo [6] Compression
+echo [7] Sorting
+echo [8] LFP
+echo [d] LFP
+echo [9] Cleaning
 echo.
 set /p "MY_SELECTION=Enter steps: "
 
@@ -132,7 +137,7 @@ echo %STEPS_TO_RUN% | findstr "1" >nul
 if %errorlevel% equ 0 (
     echo [STEP 1] Running Trodes...
     if exist "%TRODES_EXPORT_CMD%" (
-        for %%F in ("%IP%\*.rec") do ("%TRODES_EXPORT_CMD%" -dio -rec "%%F")
+        for %%F in ("%IP%\*.rec") do ("%TRODES_EXPORT_CMD%" -dio -raw -rec "%%F")
     )
 )
 
@@ -181,13 +186,42 @@ if %errorlevel% equ 0 (
     :FOUND_VIDEO
     if not "!VIDEO_FILE!"=="" (
         set "TEMP_FILE=%OP%\__temp_compressed.mp4"
-        ffmpeg -y -v error -i "!VIDEO_FILE!" -vcodec libx264 -crf 28 "!TEMP_FILE!"
+        
+        :: CHANGED LINE BELOW to use %FFMPEG_CMD%
+        "%FFMPEG_CMD%" -y -v error -i "!VIDEO_FILE!" -vcodec libx264 -crf 28 "!TEMP_FILE!"
+        
         if exist "!TEMP_FILE!" move /Y "!TEMP_FILE!" "!VIDEO_FILE!" >nul
         echo [SUCCESS] Video compressed.
     )
 )
 
+:: --- STEP 7 ---
+echo %STEPS_TO_RUN% | findstr "7" >nul
+if %errorlevel% equ 0 (
+    echo [STEP 7] Running Sorting...
+    if exist ".\src\sorter\sorting.py" (
+        python -u ./src/sorter/sorting.py --input_folder "%IP%" --output_folder "%OP%"
+    )
+
+)
+
+:: --- STEP 8 ---
+echo %STEPS_TO_RUN% | findstr "8" >nul
+if %errorlevel% equ 0 (
+    echo [STEP 8] Running LFP Extraction...
+    if exist ".\src\sorter\export_lfp.py" (
+        python -u ./src/sorter/export_lfp.py --input_folder "%IP%" --output_folder "%OP%"
+    )
+
+)
+
+
+
+python -u ./src/sorter/sorting.py --input_folder "C:\Users\gl_pc\Desktop\data\yolov\error\ip4" --output_folder "C:\Users\gl_pc\Desktop\data\yolov\error\op4"
+
+
+
 echo.
 echo [COMPLETE] Worker finished.
-timeout /t 5
+timeout /t 15
 exit
