@@ -170,9 +170,10 @@ def get_all_shortest_paths_plot_data(G, start_node, end_node, weight_mode='weigh
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Process Log Files from Output Folder')
     
-    parser.add_argument('-o', "--output", dest='output_folder', required=True, 
+    parser.add_argument('-o', "--output_folder", dest='output_folder', required=True, 
                         help='Folder path containing .log files (PDF will be saved here too)')
-    
+    parser.add_argument('-i', "--input_folder", dest='input_folder', required=True, 
+                        help='Folder path containing .log files (PDF will be saved here too)')
     args = parser.parse_args()
 
     work_dir = Path(args.output_folder)
