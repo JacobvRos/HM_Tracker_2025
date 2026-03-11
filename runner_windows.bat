@@ -173,7 +173,7 @@ echo %STEPS_TO_RUN% | findstr "5" >nul
 if %errorlevel% equ 0 (
     echo [STEP 5] Running Plotting...
     if exist ".\src\plot_trials.py" (
-        python -u ./src/plot_trials.py -o "%OP%"
+        python -u ./src/plot_trials.py --input_folder "%IP%" --output_folder "%OP%"
     )
 )
 

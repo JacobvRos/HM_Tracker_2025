@@ -177,9 +177,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     work_dir = Path(args.output_folder)
+    input_dir = Path(args.input_folder) # Add this line
 
     if not work_dir.exists():
         sys.exit(f"Error: The directory {work_dir} does not exist.")
+    if not input_dir.exists():
+        sys.exit(f"Error: The directory {input_dir} does not exist.") # Good practice to check this too
 
     # 1. Find logs
     LOG_GLOB = str(work_dir / "*.log")
@@ -205,10 +208,11 @@ if __name__ == "__main__":
 
     # --- 1c. Find and Parse Metadata Excel File ---
     # Look specifically for RecordingMeta.xlsx or fallback to any *RecordingMeta.xlsx
-    EXCEL_GLOB = str(work_dir / "RecordingMeta.xlsx")
+    # CHANGED: Now searching in input_dir instead of work_dir
+    EXCEL_GLOB = str(input_dir / "RecordingMeta.xlsx")
     excel_paths = sorted(glob.glob(EXCEL_GLOB))
     if not excel_paths:
-        excel_paths = sorted(glob.glob(str(work_dir / "*RecordingMeta.xlsx")))
+        excel_paths = sorted(glob.glob(str(input_dir / "*RecordingMeta.xlsx")))
     
     session_meta = None
     trial_metadata = {} # Dictionary to store per-trial metadata
