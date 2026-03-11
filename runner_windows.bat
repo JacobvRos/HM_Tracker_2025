@@ -255,5 +255,5 @@ if %errorlevel% equ 0 (
 
 echo.
 echo [COMPLETE] Worker finished.
-timeout /t 15
+REM timeout /t 15
 exit
