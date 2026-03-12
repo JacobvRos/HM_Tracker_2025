@@ -434,14 +434,14 @@ def readTrodesExtractedDataFile(filename):
         return fieldsText
 
 def parseFields(fieldstr):
-    sep = re.split('\s', re.sub(r"\>\<|\>|\<", ' ', fieldstr).strip())
+    sep = re.split(r'\s', re.sub(r"\>\<|\>|\<", ' ', fieldstr).strip())
     typearr = []
     for i in range(0, sep.__len__(), 2):
         fieldname = sep[i]
         repeats = 1
         ftype = 'uint32'
         if sep[i+1].__contains__('*'):
-            temptypes = re.split('\*', sep[i+1])
+            temptypes = re.split(r'\*', sep[i+1])
             ftype = temptypes[temptypes[0].isdigit()]
             repeats = int(temptypes[temptypes[1].isdigit()])
         else:
