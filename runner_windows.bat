@@ -13,8 +13,8 @@ set WAIT_SECONDS=10
 
 :: Paths
 set "FFMPEG_CMD=C:\Users\gl_pc\Desktop\code\ffmpeg-2026-03-09-git-9b7439c31b-full_build\bin\ffmpeg.exe"
-set "ONNX_WEIGHTS_PATH=C:\Users\gl_pc\Desktop\data\yolov/bests_1280_mosiac_close.pt"
-set "TRODES_EXPORT_CMD=C:\Users\gl_pc\Desktop\Trodes_2-8-0_Windows11\trodesexport.exe"
+set "ONNX_WEIGHTS_PATH=C:\Users\gl_pc\Desktop\data/bests_1280_mosiac_close.pt"
+set "TRODES_EXPORT_CMD=C:\Users\gl_pc\Desktop\Trodes_2-8-1_Windows11\trodesexport.exe"
 set FREQ=30000
 
 :: ========================================================
