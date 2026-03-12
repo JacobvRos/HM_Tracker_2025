@@ -573,9 +573,14 @@ class Tracker:
         if self.Researcher and active_rat_pos and not self.record_detections:
             dist = points_dist(active_rat_pos, self.Researcher)
 
-            # Define which trials require the 10-minute wait
-            # We check the CURRENT trial_num because that is the trial we are WAITING to start
-            is_special_lockout = self.trial_num in [4, 5, 6]
+            # Get the Trial_Type for the upcoming trial using the counter
+            if self.counter < len(self.trial_types):
+                upcoming_trial_type = int(self.trial_types[self.counter])
+            else:
+                upcoming_trial_type = 1  # Safe fallback if we run out of list items
+
+            # Lockout applies only to trial types 4, 5, and 6
+            is_special_lockout = upcoming_trial_type in [4, 5, 6]
             time_since_last_trial = self.frame_time - self.last_trial_end_time
             
             can_trigger = True
