@@ -14,8 +14,6 @@ from pathlib import Path
 from collections import deque
 from tools import mask
 import cv2
-# import onnxruntime  <-- REMOVED
-# ... 现有的 imports ...
 from ultralytics import YOLO 
 # --- ADDED FOR TILING ---
 from sahi import AutoDetectionModel
@@ -33,7 +31,6 @@ import sys
 import argparse
 import glob
 from tqdm import tqdm
-
 
 
 # --- CONFIGURATION ---
@@ -94,7 +91,7 @@ class Tracker:
         '''Tracker class initialisations'''
         self.metadata = metadata 
         self.out_path = out 
-        self.model_path = onnx_weight # Renamed for clarity, though variable passed is same
+        self.model_path = onnx_weight 
         threads = list()
         
         # Load Network in main thread context to ensure model loads correctly onto GPU/CPU
@@ -214,9 +211,9 @@ class Tracker:
         self.repeat = self.metadata['repeat']
         self.day_num = self.metadata['day']
         self.session_num = self.metadata['session']
-        # Inside load_session
+        
         self.status_message = ""
-        self.message_end_time = 0  # To track when to stop showing the message
+        self.message_end_time = 0 
 
         self.node_list = str(nl)
         self.cap = cv2.VideoCapture(str(vp))
@@ -230,11 +227,13 @@ class Tracker:
         self.disp_frame = None
         self.pos_centroid = None 
         self.center_researcher = None
-        # Inside load_session
-        self.last_trial_end_time = -1e9  # Initialize with a very small number
-        self.lockout_duration_ms = 10 * 60 * 1000  # 10 minutes in milliseconds
         
-        self.last_rat_pos = None         
+        # --- TIMER FIXES ---
+        self.last_trial_end_time = -1e9  
+        self.last_trial_start_time_ms = -1e9  # Added
+        self.lockout_duration_ms = 10 * 60 * 1000  
+        
+        self.last_rat_pos = None        
         self.last_researcher_pos = None 
 
         if self.start_point is None:
@@ -282,7 +281,7 @@ class Tracker:
         # --- GUI SETUP ---
         window_name = f"Tracker - Rat {self.rat}"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL) 
-        cv2.resizeWindow(window_name, 1176, 712) # 设置一个合理的初始大小
+        cv2.resizeWindow(window_name, 1176, 712) 
         # -----------------
 
         if self.start_point is None:
@@ -314,21 +313,17 @@ class Tracker:
             
             pbar.update(1)
 
-            # Resize matches your original logic
             self.disp_frame = cv2.resize(self.frame, (1176, 712))
             
             self.t1 = time.time()
             self.cnn(self.disp_frame) 
             self.annotate_frame(self.disp_frame)
             
-            # Write to video file
             self.out.write(self.disp_frame)
             
             # --- SHOW VIDEO WINDOW (STREAM) ---
             cv2.imshow(window_name, self.disp_frame)
             
-            # Wait 1ms for key press. If 'q' is pressed, stop the loop.
-            # waitKey is REQUIRED for imshow to redraw the window.
             k = cv2.waitKey(1) & 0xFF
             if k == ord('q'):
                 print("\nUser interrupted execution via Window (Pressed 'q').")
@@ -386,9 +381,7 @@ class Tracker:
         self.cap.release()
         self.out.release() 
         
-        # --- CLEANUP GUI ---
         cv2.destroyAllWindows()
-        # -------------------
 
     def export_tracking_data(self):
         print("\n>> Compiling tracking data to CSV...")
@@ -435,7 +428,10 @@ class Tracker:
         if points_dist(center_rat, node) < 60:
             self.logger.info('Recording Trial {}'.format(self.trial_num))
             
-            # Dynamically set this trial's parameters based on the counter
+            # --- RECORD TRIAL START TIME ---
+            self.last_trial_start_time_ms = self.frame_time
+            # -------------------------------
+            
             current_trial_type = int(self.trial_types[self.counter])
             self.goal_location = self.goal_locations[self.counter]
             self.current_goal_name = self.goal_nodes[self.counter]
@@ -447,11 +443,9 @@ class Tracker:
                 if current_trial_type == 2:
                     self.NGL = True
                     
-            # --- FIX 2: Special_Trials dependency removed ---
             if current_trial_type in [4, 5, 6]:
                 self.NGL = True
                 self.start_time = (self.frame_time / (1000 * 60)) % 60
-            # ------------------------------------------------
                     
             if not self.probe and not self.NGL:
                 self.normal_trial = True
@@ -479,10 +473,7 @@ class Tracker:
                 return True
         return False
     
-    # --- MODIFIED CNN FUNCTION FOR YOLO11 ---
     def cnn(self, frame):
-        # 1. Standard YOLO Inference on the full frame
-        # stream=True is more memory efficient for video processing
         results = self.model(frame, conf=0.7, verbose=False, imgsz=1280)
 
         self.Rat = None
@@ -494,28 +485,20 @@ class Tracker:
         detected_head_this_frame = False
         detected_rat_body_this_frame = False
 
-        # 2. Parse results (Standard Ultralytics Result object)
         for r in results:
             boxes = r.boxes
             for box in boxes:
-                # Get coordinates
                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
-                
-                # Get metadata
                 confidence = float(box.conf[0])
                 cls_id = int(box.cls[0])
                 label = self.model_names[cls_id]
-                
-                # Calculate centroid
                 centroid = (int((x1 + x2) / 2), int((y1 + y2) / 2))
 
-                # Drawing logic (Matches your original style)
                 color = colors[cls_id % len(colors)]
                 cv2.rectangle(self.disp_frame, (x1, y1), (x2, y2), color, 2)
                 cv2.putText(self.disp_frame, f"{label} {confidence:.2f}", 
                             (x1, y1 + 20), font, 1, (255, 255, 255), 1)
 
-                # Classification Logic
                 if label == 'head':
                     rat_candidates.append((confidence, centroid, 'head'))
                     detected_head_this_frame = True
@@ -525,7 +508,6 @@ class Tracker:
                 elif label == 'researcher':
                     researcher_candidates.append((confidence, centroid))
 
-        # 3. Decision logic (Remains exactly as you had it)
         if rat_candidates:
             rat_candidates.sort(key=lambda x: x[0], reverse=True)
             best_conf, best_centroid, best_label = rat_candidates[0]
@@ -544,8 +526,6 @@ class Tracker:
             researcher_candidates.sort(key=lambda x: x[0], reverse=True)
             self.Researcher = researcher_candidates[0][1]
 
-        # 4. Post-Detection State Machine logic (Rest of your existing function...)
-        # [Keep the rest of your logic from "if self.Rat is not None:" onwards]
         if self.Rat is not None:
             self.last_rat_pos = self.Rat
         if self.Researcher is not None:
@@ -553,7 +533,6 @@ class Tracker:
 
         active_rat_pos = self.Rat if self.Rat is not None else self.last_rat_pos
         
-        # Logic check for Un-normal trials
         if not self.start_trial and not self.end_session and self.trial_num in self.unnormal_intervals:
             _, end_block_abs = self.unnormal_intervals[self.trial_num]
             current_abs_minutes = (self.frame_time / (1000 * 60)) % 60
@@ -565,7 +544,6 @@ class Tracker:
                 self.reached = False
                 self.end_trial()
                 self.start_trial = True  
-                #self.trial_num += 1      
                 self.check = False       
                 return
 
@@ -573,22 +551,25 @@ class Tracker:
         if self.Researcher and active_rat_pos and not self.record_detections:
             dist = points_dist(active_rat_pos, self.Researcher)
 
-            # Get the Trial_Type for the upcoming trial using the counter
-            if self.counter < len(self.trial_types):
-                upcoming_trial_type = int(self.trial_types[self.counter])
+            # Check the PREVIOUS trial's type. If Trial 11 was special, the lockout 
+            # applies to the interval after Trial 11, before Trial 12.
+            if self.counter > 0 and (self.counter - 1) < len(self.trial_types):
+                previous_trial_type = int(self.trial_types[self.counter - 1])
             else:
-                upcoming_trial_type = 1  # Safe fallback if we run out of list items
+                previous_trial_type = 1  # Safe fallback
 
-            # Lockout applies only to trial types 4, 5, and 6
-            is_special_lockout = upcoming_trial_type in [4, 5, 6]
-            time_since_last_trial = self.frame_time - self.last_trial_end_time
+            # Lockout applies only if the PREVIOUS trial was 4, 5, or 6
+            is_special_lockout = previous_trial_type in [4, 5, 6]
+            
+            # Count time from the exact start of that special trial
+            time_since_trial_start = self.frame_time - getattr(self, 'last_trial_start_time_ms', -1e9)
             
             can_trigger = True
             if is_special_lockout:
-                if time_since_last_trial < self.lockout_duration_ms:
+                if time_since_trial_start < self.lockout_duration_ms:
                     can_trigger = False
                     # Visual feedback for the lockout
-                    remaining_sec = int((self.lockout_duration_ms - time_since_last_trial) / 1000)
+                    remaining_sec = int((self.lockout_duration_ms - time_since_trial_start) / 1000)
                     cv2.putText(self.disp_frame, f"LOCKOUT: {remaining_sec}s", (60, 110), 
                                 font, 1, (0, 0, 255), 2)
                 else:
@@ -602,9 +583,8 @@ class Tracker:
                 
                 print(f">>> Lockout finished/not required. Starting Trial {self.trial_num}")
                 self.start_trial = True
-                # REMOVED: self.trial_num += 1 (This should be handled carefully)
-                # Ensure trial_num matches your counter logic
                 self.check = False
+        # ----------------------------------------
 
         if active_rat_pos:
             if self.start_trial:
@@ -683,7 +663,6 @@ class Tracker:
 
                 if self.cover_start_timer >= self.cover_required_time:
                     self.start_trial = True
-                    #self.trial_num += 1
                     self.check = False
                     self.covering_start_node = False
                     self.cover_start_timer = 0.0
@@ -736,16 +715,12 @@ class Tracker:
         self.centroid_list.append(self.pos_centroid)
         self.annotate_frame(self.disp_frame)
         
-        # ... existing logging logic ...
-
         self.calculate_velocity(self.time_points)
         self.save_to_file(self.save)
         self.last_trial_end_time = self.frame_time 
         
-        # Move to the next index in your metadata lists
         self.counter += 1 
         
-        # Only increment trial_num if we haven't finished the session
         if self.counter < int(self.num_trials):
             self.trial_num += 1 
         else:
@@ -834,17 +809,13 @@ class Tracker:
         cv2.putText(frame, str(self.converted_time), (970, 670),
                     fontFace=FONT, fontScale=0.75, color=(240, 240, 240), thickness=1)
         
-        # --- FIXED FPS CALCULATION ---
         time_diff = time.time() - self.t1
-        # Prevent division by zero by using a tiny minimum value (0.001 seconds)
         fps = 1.0 / max(time_diff, 0.001) 
-        # -----------------------------
         
         self.store_fps.append(fps)
         cv2.putText(frame, "FPS: {:.2f}".format(fps), (970, 650), fontFace=FONT, fontScale=0.75, color=(240, 240, 240),
                     thickness=1)
         
-        # Draw the active Goal Node for the current trial
         if self.counter < len(self.goal_locations):
             active_goal_loc = self.goal_locations[self.counter]
             active_goal_name = self.goal_nodes[self.counter]
@@ -1005,7 +976,7 @@ if __name__ == "__main__":
         
         in_p = args.input_folder
         out_p = args.output_folder
-        model_path = args.onnx_weight # Keep variable name for compatibility but it loads .pt
+        model_path = args.onnx_weight 
         print("Model path:")
         print(model_path)
         
@@ -1021,7 +992,7 @@ if __name__ == "__main__":
             print(f"ERROR: No file found matching pattern '*RecordingMeta.xlsx' in folder: {in_p}")
             sys.exit(1)
             
-        xlsx_file = meta_files[0] # Take the first matching file
+        xlsx_file = meta_files[0] 
         metadata = parse_metadata_xlsx(xlsx_file)
 
         # 3. Start Tracker
