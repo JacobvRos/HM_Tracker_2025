@@ -256,4 +256,4 @@ if %errorlevel% equ 0 (
 echo.
 echo [COMPLETE] Worker finished.
 REM timeout /t 15
-exit
+REM exit
