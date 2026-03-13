@@ -9,10 +9,11 @@ cd /d "%~dp0"
 :: Thresholds
 set MAX_CPU=90
 set MAX_GPU=90
-set WAIT_SECONDS=10
+set MAX_MEM=90
+set WAIT_SECONDS=30
 
 :: Paths
-set "FFMPEG_CMD=C:\Users\gl_pc\Desktop\code\ffmpeg-2026-03-09-git-9b7439c31b-full_build\bin\ffmpeg.exe"
+set "FFMPEG_CMD=C:\Users\gl_pc\Desktop\ffmpeg-2026-03-12-git-9dc44b43b2-full_build\bin\ffmpeg.exe"
 set "ONNX_WEIGHTS_PATH=C:\Users\gl_pc\Desktop\data/yolov/bests_1280_mosiac_close.pt"
 set "TRODES_EXPORT_CMD=C:\Users\gl_pc\Desktop\Trodes_2-8-1_Windows11\trodesexport.exe"
 set FREQ=30000
@@ -77,7 +78,9 @@ for /d %%D in ("%ROOT_DIR%\ip*") do (
         :: Pass the %MY_SELECTION% as the 4th parameter to the worker
         start "Job-!DIR_NAME!" cmd /k call "%~f0" :WORKER "!IP_PATH!" "!OP_PATH!" "%MY_SELECTION%"
         
-        timeout /t 3 /nobreak >nul
+        :: 3. UPDATED: Wait exactly 15 seconds before the next loop iteration
+        echo [MASTER] Job launched. Waiting 15s for stability...
+        timeout /t 20 /nobreak >nul
     )
 )
 
@@ -93,13 +96,13 @@ exit /b
 :: ========================================================
 :WAIT_FOR_RESOURCES
 :CHECK_AGAIN
+    :: --- Check CPU (Using PowerShell instead of wmic) ---
     set CPU_LOAD=0
-    for /f "skip=1" %%P in ('wmic cpu get loadpercentage') do (
+    for /f "delims=" %%P in ('powershell -NoProfile -Command "[math]::Round((Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average)" 2^>nul') do (
         if "%%P" neq "" set CPU_LOAD=%%P
-        goto :break_cpu
     )
-    :break_cpu
 
+    :: --- Check GPU ---
     set GPU_LOAD=0
     nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits > gpu_temp.txt 2>nul
     if exist gpu_temp.txt (
@@ -108,17 +111,30 @@ exit /b
     )
     if "%GPU_LOAD%"=="" set GPU_LOAD=0
 
+    :: --- Check Memory (Using PowerShell to bypass 32-bit batch math limits) ---
+    set MEM_USAGE=0
+    for /f "delims=" %%M in ('powershell -NoProfile -Command "$os = Get-CimInstance Win32_OperatingSystem; [math]::Round((($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / $os.TotalVisibleMemorySize) * 100)" 2^>nul') do (
+        if "%%M" neq "" set MEM_USAGE=%%M
+    )
+
+    :: --- Validation Logic ---
     if !CPU_LOAD! GTR %MAX_CPU% (
-        echo     [WAIT] High CPU: !CPU_LOAD!%%. Pausing...
+        echo     [WAIT] High CPU: !CPU_LOAD!%%. Pausing %WAIT_SECONDS%s...
         timeout /t %WAIT_SECONDS% /nobreak >nul
         goto :CHECK_AGAIN
     )
     if !GPU_LOAD! GTR %MAX_GPU% (
-        echo     [WAIT] High GPU: !GPU_LOAD!%%. Pausing...
+        echo     [WAIT] High GPU: !GPU_LOAD!%%. Pausing %WAIT_SECONDS%s...
         timeout /t %WAIT_SECONDS% /nobreak >nul
         goto :CHECK_AGAIN
     )
-    echo     [CHECK] CPU: !CPU_LOAD!%% ^| GPU: !GPU_LOAD!%% - OK.
+    if !MEM_USAGE! GTR %MAX_MEM% (
+        echo     [WAIT] High MEM: !MEM_USAGE!%%. Pausing %WAIT_SECONDS%s...
+        timeout /t %WAIT_SECONDS% /nobreak >nul
+        goto :CHECK_AGAIN
+    )
+
+    echo     [CHECK] CPU: !CPU_LOAD!%% ^| GPU: !GPU_LOAD!%% ^| MEM: !MEM_USAGE!%% - OK.
 exit /b
 
 :: ========================================================
