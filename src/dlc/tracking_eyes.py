@@ -102,6 +102,9 @@ def process_tracking_data(
     df = pd.read_csv(csv_file)
     df = add_region_column(df)
     
+    # --- NEW: Initialize the column to store the extracted frame index ---
+    df['extracted_frame_idx'] = pd.NA
+    
     # --- OPTIMIZATION 1: Pre-map regions to video files ---
     print("Pre-mapping video paths...")
     unique_regions = df['region_id'].dropna().unique()
@@ -134,6 +137,9 @@ def process_tracking_data(
         if not ok:
             errors.append(f"Row {row_idx}: {err}")
             continue
+            
+        # --- NEW: Record the frame index successfully extracted for this row ---
+        df.at[row_idx, 'extracted_frame_idx'] = int(row_idx)
 
         if int(region_id) > 5:
             frame = cv2.flip(frame, 0)
@@ -167,7 +173,13 @@ def process_tracking_data(
     video_reader.release_all()
     cv2.destroyAllWindows()
     
+    # --- NEW: Save the updated dataframe to a new CSV file ---
+    output_csv_path = op_path / f"{csv_file.stem}_with_frames.csv"
+    df.to_csv(output_csv_path, index=False)
+    
     print(f"\n\nProcessing Complete. Video saved to: {output_vid_path}")
+    print(f"Updated CSV saved to: {output_csv_path}")
+    
     if errors:
         print(f"Encountered {len(errors)} errors. (Showing first 5)")
         for e in errors[:5]: print(e)
