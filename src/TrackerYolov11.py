@@ -752,39 +752,47 @@ class Tracker:
                    ('223', '404'): 1.69,
                    ('324', '401'): 0.60,
                    ('305', '220'): 0.60}
+        
         if len(time_points) > 2:
-            lenght = 0
-            speed = 0
-            format = '%H:%M:%S.%f'
-            for i in range(0, len(time_points)):
+            for i in range(0, len(time_points) - 1):
                 start_node = time_points[i][1]
-                start_time = datetime.strptime((time_points[i][0]), format).time()
                 j = i + 1
-                if j == len(time_points):
-                    self.last_node = time_points[i][1]
-                else:
-                    end_node = time_points[j][1]
-                    end_time = datetime.strptime((time_points[j][0]), format).time()
-                    difference = timedelta(hours=end_time.hour - start_time.hour,
-                                           minutes=end_time.minute - start_time.minute,
-                                           seconds=end_time.second - start_time.second,
-                                           microseconds=end_time.microsecond - start_time.microsecond).total_seconds()
-                    if (start_node, end_node) in bridges:
-                        lenght = bridges[(start_node, end_node)]
+                end_node = time_points[j][1]
+                
+                try:
+                    # Logic to handle BOTH old string timestamps and new float timestamps
+                    t1 = time_points[i][0]
+                    t2 = time_points[j][0]
+                    
+                    if isinstance(t1, str) and ":" in t1:
+                        # Old behavior for backward compatibility
+                        format = '%H:%M:%S.%f'
+                        st = datetime.strptime(t1, format)
+                        et = datetime.strptime(t2, format)
+                        difference = (et - st).total_seconds()
+                    else:
+                        # New behavior: Directly subtract the "Seconds From Creation"
+                        difference = float(t2) - float(t1)
 
-                    elif (end_node, start_node) in bridges:
-                        lenght = bridges[(end_node, start_node)]
-
+                    # Calculate distance
+                    if (start_node, end_node) in bridges or (end_node, start_node) in bridges:
+                        lenght = bridges.get((start_node, end_node), bridges.get((end_node, start_node)))
                     else:
                         lenght = 0.30 
-                    try:
+
+                    # Calculate speed
+                    if difference > 0:
                         speed = round(float(lenght) / float(difference), 3)
-                    except ZeroDivisionError:
+                    else:
                         speed = 0
-                    finally:
-                        self.summary_trial.append(
-                            [(start_node, end_node), (time_points[i][0], time_points[j][0]), difference, lenght, speed])
-                        self.saved_velocities.append(speed)
+
+                    self.summary_trial.append(
+                        [(start_node, end_node), (t1, t2), round(difference, 3), lenght, speed])
+                    self.saved_velocities.append(speed)
+
+                except Exception as e:
+                    print(f"Error calculating velocity at nodes {start_node}->{end_node}: {e}")
+                    continue
 
     @staticmethod
     def annotate_node(frame, point, node, t):
