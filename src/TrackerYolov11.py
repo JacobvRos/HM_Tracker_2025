@@ -150,6 +150,14 @@ class Tracker:
              print("Warning: No timestamp CSV found. Logs might lack sync times.")
              self.sync_ts_dict = {"Corrected Time Stamp": {}} 
 
+        # Inside __init__, after loading self.sync_ts_dict:
+        self.ts_column_name = "Seconds From Creation" 
+        if self.ts_file_loaded:
+            # Check if the expected name exists, otherwise grab the first available column
+            if self.ts_column_name not in self.sync_ts_dict:
+                self.ts_column_name = list(self.sync_ts_dict.keys())[0]
+            print(f"Using '{self.ts_column_name}' for summary timestamps.")
+
         self.frame_data_log = []
 
         self.run_vid()
@@ -832,16 +840,22 @@ class Tracker:
             start_node_name = self.start_nodes[self.counter]
             self.annotate_node(frame, point=start_pos, node=start_node_name, t=1)
 
+        # Inside annotate_frame, find the 'record_detections' block:
         if self.record_detections:
+            # Get the sync time for the current frame
+            curr_idx = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+            sync_time = self.sync_ts_dict.get(self.ts_column_name, {}).get(curr_idx, self.converted_time)
+
             for node_name in nodes_dict:
                 if points_dist(self.pos_centroid, nodes_dict[node_name]) <= 20:
                     self.saved_nodes.append(node_name)
                     self.node_pos.append(nodes_dict[node_name])
 
+                    # Use sync_time instead of self.converted_time
                     if len(self.time_points) == 0:
-                        self.time_points.append([self.converted_time, node_name])
-                    if node_name != self.saved_nodes[(len(self.saved_nodes)) - 2]:
-                        self.time_points.append([self.converted_time, node_name])
+                        self.time_points.append([sync_time, node_name])
+                    elif node_name != self.saved_nodes[-2]:
+                        self.time_points.append([sync_time, node_name])
 
             cv2.putText(frame, 'Trial:' + str(self.trial_num), (60, 60),
                         fontFace=FONT, fontScale=0.75, color=(255, 255, 255), thickness=1)
@@ -869,18 +883,24 @@ class Tracker:
 
     def save_to_file(self, fname):
         savelist = []
+        # Get the sync time for the frame where the trial ended
+        curr_idx = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+        trial_end_sync = self.sync_ts_dict.get(self.ts_column_name, {}).get(curr_idx, self.converted_time)
+
         with open(fname, 'a+') as file:
             for k, g in groupby(self.saved_nodes):
                 savelist.append(k)
             file.writelines('%s,' % items for items in savelist)
-            file.write(
-                '\nSummary Trial {}\nStart-Next Nodes// Time points(s) //Seconds//Lenght(cm)// Velocity(m/s)\n'.format(
-                    self.trial_num))
+            
+            file.write('\nSummary Trial {}\n'.format(self.trial_num))
+            file.write('Trial End (Sync Seconds): {}\n'.format(trial_end_sync))
+            file.write('Start-Next Nodes // Sync Time (s) // Diff (s) // Length (m) // Velocity (m/s)\n')
+            
             for i in range(0, len(self.summary_trial)):
+                # summary_trial[i] contains: [(nodes), (times), difference, length, speed]
                 line = " ".join(map(str, self.summary_trial[i]))
                 file.write(line + '\n')
             file.write('\n')
-        file.close()
 
     def find_location(self, start_nodes, goal_nodes):
         nodes_dict = self.nodes_dict
