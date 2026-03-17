@@ -27,7 +27,7 @@ if not exist "%CONFIG_FILE%" (
     exit /b 1
 )
 for /f "usebackq tokens=1,* delims==" %%A in ("%CONFIG_FILE%") do (
-    if not "%%A"=="" if not "%%A:~0,1%"=="#" set "%%A=%%B"
+    if not "%%A"=="" if not "!A:~0,1!"=="#" set "%%A=%%B"
 )
 set FREQ=30000
 
