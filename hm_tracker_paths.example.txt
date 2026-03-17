@@ -1,0 +1,8 @@
+# HM Tracker Path Config
+# Copy this file to your Desktop and rename it to: hm_tracker_paths.txt
+# Then update the paths below to match your machine.
+# Lines starting with # are ignored.
+
+FFMPEG_CMD=C:\Users\YOUR_NAME\Desktop\ffmpeg-...\bin\ffmpeg.exe
+ONNX_WEIGHTS_PATH=C:\Users\YOUR_NAME\Desktop\data\yolov\bests_1280_mosiac_close.pt
+TRODES_EXPORT_CMD=C:\Users\YOUR_NAME\Desktop\Trodes_2-8-1_Windows11\trodesexport.exe

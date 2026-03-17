@@ -12,10 +12,23 @@ set MAX_GPU=90
 set MAX_MEM=90
 set WAIT_SECONDS=30
 
-:: Paths
-set "FFMPEG_CMD=C:\Users\gl_pc\Desktop\ffmpeg-2026-03-12-git-9dc44b43b2-full_build\bin\ffmpeg.exe"
-set "ONNX_WEIGHTS_PATH=C:\Users\gl_pc\Desktop\data/yolov/bests_1280_mosiac_close.pt"
-set "TRODES_EXPORT_CMD=C:\Users\gl_pc\Desktop\Trodes_2-8-1_Windows11\trodesexport.exe"
+:: Paths - loaded from Desktop config file
+set "CONFIG_FILE=%USERPROFILE%\Desktop\hm_tracker_paths.txt"
+if not exist "%CONFIG_FILE%" (
+    echo [ERROR] Config file not found: %CONFIG_FILE%
+    echo.
+    echo Please create hm_tracker_paths.txt on your Desktop with these lines:
+    echo   FFMPEG_CMD=C:\path\to\ffmpeg.exe
+    echo   ONNX_WEIGHTS_PATH=C:\path\to\weights.pt
+    echo   TRODES_EXPORT_CMD=C:\path\to\trodesexport.exe
+    echo.
+    echo See hm_tracker_paths.example.txt in the repo for a template.
+    pause
+    exit /b 1
+)
+for /f "usebackq tokens=1,* delims==" %%A in ("%CONFIG_FILE%") do (
+    if not "%%A"=="" if not "%%A:~0,1%"=="#" set "%%A=%%B"
+)
 set FREQ=30000
 
 :: ========================================================
