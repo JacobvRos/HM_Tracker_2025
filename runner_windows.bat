@@ -9,7 +9,7 @@ cd /d "%~dp0"
 :: Thresholds
 set MAX_CPU=90
 set MAX_GPU=90
-set MAX_MEM=90
+set MAX_MEM=65
 set WAIT_SECONDS=30
 
 :: Paths - loaded from Desktop config file
