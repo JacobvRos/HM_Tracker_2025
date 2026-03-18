@@ -456,9 +456,18 @@ def parseFields(fieldstr):
     return np.dtype(typearr)
 
 
-def extract_dio_com(dio_file_path_dict, sampling_freq):
+def extract_dio_com(dio_file_path_dict, sampling_freq, fallback_start_time=None):
     sys_time_dict = readTrodesExtractedDataFile(dio_file_path_dict['init'][0])
-    sys_time = int(sys_time_dict['system_time_at_creation'])/1000
+    try:
+        sys_time = int(sys_time_dict['system_time_at_creation']) / 1000
+        timestamp_at_creation = int(sys_time_dict['timestamp_at_creation'])
+    except (KeyError, ValueError):
+        if fallback_start_time is None:
+            raise RuntimeError("system_time_at_creation missing and no fallback_start_time provided.")
+        print("Warning: using fallback_start_time from video metadata.")
+        timestamp_at_creation = int(sys_time_dict['first_timestamp'])
+        sys_time = fallback_start_time
+
     print("----------------------------------------------------------")
     print(sys_time)
     timestamp_at_creation = int(sys_time_dict['timestamp_at_creation'])
@@ -684,7 +693,10 @@ if __name__ == "__main__":
 
     ica_com_red, ica_com_blue, red_ica_total, blue_ica_total = merge_ica_and_extract_com(red_ica_list, blue_ica_list)
 
-    dio_com_red, dio_com_blue, system_start_time, timestamp_at_creation, first_timestamp = extract_dio_com(dio_file_path_dict, int(args.sampling_freq))
+    fallback_start = avg_ts_per_frame[0]  # already computed before this call
+
+    dio_com_red, dio_com_blue, system_start_time, timestamp_at_creation, first_timestamp = extract_dio_com(
+        dio_file_path_dict, int(args.sampling_freq), fallback_start_time=fallback_start)
 
     visualise_ica_dio_coms(dio_com_red, ica_com_red, dio_com_blue, ica_com_blue)
 
