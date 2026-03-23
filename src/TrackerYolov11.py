@@ -216,6 +216,7 @@ class Tracker:
         # -------------------------
         
         self.special_trials = self.metadata['special_trials_list']
+        self.did_not_reach_list = self.metadata.get('did_not_reach_list', [])
         self.repeat = self.metadata['repeat']
         self.day_num = self.metadata['day']
         self.session_num = self.metadata['session']
@@ -282,6 +283,7 @@ class Tracker:
         self.out = ThreadedVideoWriter('{}'.format(self.save_video), self.codec, self.vid_fps, (1176, 712))
         
         self.researcher_goal_timer = 0.0
+        self.pickup_timer = 0.0
 
     def run_vid(self):
         print('\nStarting video processing (Live Stream Enabled).....\n')
@@ -465,9 +467,10 @@ class Tracker:
             self.saved_nodes = []
             self.node_id = [] 
             self.saved_velocities = []
-            self.record_detections = True  
-            
+            self.record_detections = True
+
             self.researcher_goal_timer = 0.0
+            self.pickup_timer = 0.0
             
             self.pos_centroid = node
             self.centroid_list.append(self.pos_centroid)
@@ -682,8 +685,10 @@ class Tracker:
     def object_detection(self, rat):
         self.pos_centroid = rat
         self.centroid_list.append(self.pos_centroid)
-        
+
         is_immune = self.check_immunity()
+        is_did_not_reach = (self.counter < len(self.did_not_reach_list) and
+                            self.did_not_reach_list[self.counter] == 1)
 
         if self.NGL:
             minutes = self.timer(start=self.start_time)
@@ -711,12 +716,24 @@ class Tracker:
                         pass 
 
         if self.normal_trial:
-            if points_dist(self.pos_centroid, self.goal_location) <= self.goal_node_radius:
-                if not is_immune:
-                    self.normal_trial = False
-                    self.end_trial()
-                else:
-                    pass 
+            if not is_did_not_reach:
+                if points_dist(self.pos_centroid, self.goal_location) <= self.goal_node_radius:
+                    if not is_immune:
+                        self.normal_trial = False
+                        self.end_trial()
+            else:
+                # "Did Not Reach" end logic: trial ends when rat is picked up by researcher
+                if self.Researcher is not None:
+                    dist_to_researcher = points_dist(self.pos_centroid, self.Researcher)
+                    if dist_to_researcher <= 60:
+                        self.pickup_timer += (1.0 / self.vid_fps)
+                        if self.pickup_timer >= 1.0:
+                            print(f'\n\n >>> Did Not Reach: Trial {self.trial_num} ended - rat picked up by researcher')
+                            self.normal_trial = False
+                            self.end_trial()
+                            self.pickup_timer = 0.0
+                    else:
+                        self.pickup_timer = 0.0
     
     def end_trial(self):
         self.pos_centroid = self.goal_location
@@ -954,6 +971,10 @@ def parse_metadata_xlsx(xlsx_path):
         if 'Special_Trials' in df.columns:
              sp_trials = df['Special_Trials'].dropna().astype(int).tolist()
 
+        did_not_reach = []
+        if 'Did_Not_Reach' in df.columns:
+            did_not_reach = df['Did_Not_Reach'].dropna().astype(int).tolist()
+
         un_dict = {}
         if 'Unnormal_Intervals' in df.columns:
             un_list = df['Unnormal_Intervals'].dropna().astype(str).tolist()
@@ -981,6 +1002,7 @@ def parse_metadata_xlsx(xlsx_path):
             'goal_nodes_list': g_nodes,
             'trial_types_list': t_types,
             'special_trials_list': sp_trials,
+            'did_not_reach_list': did_not_reach,
             'unnormal_intervals': un_dict
         }
         return metadata
