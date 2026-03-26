@@ -562,33 +562,26 @@ class Tracker:
         if self.Researcher and active_rat_pos and not self.record_detections:
             dist = points_dist(active_rat_pos, self.Researcher)
 
-            # Check the PREVIOUS trial's type. If Trial 11 was special, the lockout 
-            # applies to the interval after Trial 11, before Trial 12.
             if self.counter > 0 and (self.counter - 1) < len(self.trial_types):
                 previous_trial_type = int(self.trial_types[self.counter - 1])
             else:
-                previous_trial_type = 1  # Safe fallback
+                previous_trial_type = 1
 
-            # Lockout applies only if the PREVIOUS trial was 4, 5, or 6
             is_special_lockout = previous_trial_type in [4, 5, 6]
             
-            # Count time from the exact start of that special trial
             time_since_trial_start = self.frame_time - getattr(self, 'last_trial_start_time_ms', -1e9)
             
             can_trigger = True
             if is_special_lockout:
                 if time_since_trial_start < self.lockout_duration_ms:
                     can_trigger = False
-                    # Visual feedback for the lockout
                     remaining_sec = int((self.lockout_duration_ms - time_since_trial_start) / 1000)
                     cv2.putText(self.disp_frame, f"LOCKOUT: {remaining_sec}s", (60, 110), 
                                 font, 1, (0, 0, 255), 2)
                 else:
-                    # Timer passed, researcher can now trigger
                     cv2.putText(self.disp_frame, "READY: Researcher can start trial", (60, 110), 
                                 font, 1, (0, 255, 0), 2)
 
-            # Only trigger if within distance AND (not special OR timer passed)
             if (not self.start_trial and not self.end_session and 
                 not self.record_detections and dist <= 80 and can_trigger): 
                 
@@ -609,7 +602,11 @@ class Tracker:
                 
                 self.object_detection(rat=active_rat_pos)
                 
-                if self.Researcher is not None and self.goal_location is not None:
+                # <<< FIX: Re-check record_detections AFTER object_detection,
+                # because object_detection -> end_trial() may have set it to False.
+                # Without this guard, the timer below fires on the same frame
+                # that the trial already ended, causing a double end_trial().
+                if self.record_detections and self.Researcher is not None and self.goal_location is not None:
                     dist_to_goal = points_dist(self.Researcher, self.goal_location)
                     
                     if dist_to_goal <= 50:
@@ -624,7 +621,12 @@ class Tracker:
                     else:
                         self.researcher_goal_timer = 0.0
 
-        if self.Researcher is not None and self.goal_location is not None:
+        # <<< FIX: Guard this entire block with record_detections.
+        # Previously this ran EVERY frame unconditionally, so after a trial ended
+        # it kept accumulating researcher_goal_timer and would call end_trial()
+        # again (skipping the next trial). This was the main cause of trials
+        # being skipped and the next start node never appearing after trial 15.
+        if self.record_detections and self.Researcher is not None and self.goal_location is not None:
             dist_to_goal = points_dist(self.Researcher, self.goal_location)
             
             if dist_to_goal <= 80:
@@ -972,9 +974,9 @@ def parse_metadata_xlsx(xlsx_path):
              sp_trials = df['Special_Trials'].dropna().astype(int).tolist()
 
         did_not_reach = []
-        if 'Did_Not_Reach' in df.columns:
-            did_not_reach = df['Did_Not_Reach'].dropna().astype(int).tolist()
-
+        dnr_col = [c for c in df.columns if c.lower() == 'did_not_reach']
+        if dnr_col:
+            did_not_reach = df[dnr_col[0]].dropna().astype(int).tolist()
         un_dict = {}
         if 'Unnormal_Intervals' in df.columns:
             un_list = df['Unnormal_Intervals'].dropna().astype(str).tolist()
