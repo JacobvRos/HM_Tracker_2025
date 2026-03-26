@@ -253,6 +253,7 @@ class Tracker:
         self.count_rat = 0
         self.count_head = 0
         self.start_time = 0 
+        self.converted_time = "00:00:00.000"  
         
         self.normal_trial = False
         self.NGL = False
