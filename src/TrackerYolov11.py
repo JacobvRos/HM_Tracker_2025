@@ -68,7 +68,12 @@ class ThreadedVideoWriter:
     def write(self, frame):
         if not self.stopped:
             self.queue.put(frame)
-
+            
+    def closest_researcher_to(self, point):
+        if not self.all_researchers:
+            return None
+        return min(self.all_researchers, key=lambda r: points_dist(r, point))
+    
     def write_frames(self):
         while True:
             if self.stopped and self.queue.empty():
@@ -534,9 +539,16 @@ class Tracker:
 
             self.Rat = best_centroid
 
+        # NEW
+        self.all_researchers = []
         if researcher_candidates:
-            researcher_candidates.sort(key=lambda x: x[0], reverse=True)
-            self.Researcher = researcher_candidates[0][1]
+            self.all_researchers = [pos for _, pos in researcher_candidates]
+            # Keep self.Researcher as closest to rat for logging/compatibility
+            if active_rat_pos:
+                self.Researcher = min(self.all_researchers, key=lambda r: points_dist(r, active_rat_pos))
+            else:
+                self.all_researchers.sort(key=lambda x: researcher_candidates[0][0], reverse=True)
+                self.Researcher = self.all_researchers[0]
 
         if self.Rat is not None:
             self.last_rat_pos = self.Rat
@@ -726,8 +738,9 @@ class Tracker:
                         self.end_trial()
             else:
                 # "Did Not Reach" end logic: trial ends when rat is picked up by researcher
-                if self.Researcher is not None:
-                    dist_to_researcher = points_dist(self.pos_centroid, self.Researcher)
+                closest_to_rat = self.closest_researcher_to(self.pos_centroid)
+                if closest_to_rat is not None:
+                    dist_to_researcher = points_dist(self.pos_centroid, closest_to_rat)
                     if dist_to_researcher <= 60:
                         self.pickup_timer += (1.0 / self.vid_fps)
                         if self.pickup_timer >= 1.0:
