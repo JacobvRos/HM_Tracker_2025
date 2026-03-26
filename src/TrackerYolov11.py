@@ -584,7 +584,7 @@ class Tracker:
                                 font, 1, (0, 255, 0), 2)
 
             if (not self.start_trial and not self.end_session and 
-                not self.record_detections and dist <= 80 and can_trigger): 
+                not self.record_detections and dist <= 300 and can_trigger): 
                 
                 print(f">>> Lockout finished/not required. Starting Trial {self.trial_num}")
                 self.start_trial = True
