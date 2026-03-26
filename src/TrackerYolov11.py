@@ -228,7 +228,8 @@ class Tracker:
         
         self.status_message = ""
         self.message_end_time = 0 
-
+        self.all_researchers = []
+        
         self.node_list = str(nl)
         self.cap = cv2.VideoCapture(str(vp))
         self.start_trial = True 
@@ -490,12 +491,19 @@ class Tracker:
                 return True
         return False
     
+    def closest_researcher_to(self, point):
+        """Return the closest researcher position to the given point, or None."""
+        if not self.all_researchers:
+            return None
+        return min(self.all_researchers, key=lambda r: points_dist(r, point))
+
     def cnn(self, frame):
         results = self.model(frame, conf=0.7, verbose=False, imgsz=1280)
 
         self.Rat = None
         self.Researcher = None
-        
+        self.all_researchers = []
+
         rat_candidates = []
         researcher_candidates = []
 
@@ -513,7 +521,7 @@ class Tracker:
 
                 color = colors[cls_id % len(colors)]
                 cv2.rectangle(self.disp_frame, (x1, y1), (x2, y2), color, 2)
-                cv2.putText(self.disp_frame, f"{label} {confidence:.2f}", 
+                cv2.putText(self.disp_frame, f"{label} {confidence:.2f}",
                             (x1, y1 + 20), font, 1, (255, 255, 255), 1)
 
                 if label == 'head':
@@ -525,6 +533,7 @@ class Tracker:
                 elif label == 'researcher':
                     researcher_candidates.append((confidence, centroid))
 
+        # --- RAT SELECTION (unchanged) ---
         if rat_candidates:
             rat_candidates.sort(key=lambda x: x[0], reverse=True)
             best_conf, best_centroid, best_label = rat_candidates[0]
@@ -539,144 +548,154 @@ class Tracker:
 
             self.Rat = best_centroid
 
-        # NEW
-        self.all_researchers = []
+        # --- RESEARCHER SELECTION: store ALL positions ---
         if researcher_candidates:
             self.all_researchers = [pos for _, pos in researcher_candidates]
-            # Keep self.Researcher as closest to rat for logging/compatibility
-            if active_rat_pos:
-                self.Researcher = min(self.all_researchers, key=lambda r: points_dist(r, active_rat_pos))
-            else:
-                self.all_researchers.sort(key=lambda x: researcher_candidates[0][0], reverse=True)
-                self.Researcher = self.all_researchers[0]
 
+        # --- CACHE LAST KNOWN POSITIONS ---
         if self.Rat is not None:
             self.last_rat_pos = self.Rat
-        if self.Researcher is not None:
-            self.last_researcher_pos = self.Researcher
+        if self.all_researchers:
+            self.last_researcher_pos = self.all_researchers[0]
 
+        # --- ACTIVE RAT POS (must be set before anything else uses it) ---
         active_rat_pos = self.Rat if self.Rat is not None else self.last_rat_pos
-        
+
+        # --- Set self.Researcher to closest to rat (for logging / frame_data_log) ---
+        if self.all_researchers and active_rat_pos:
+            self.Researcher = self.closest_researcher_to(active_rat_pos)
+        elif self.all_researchers:
+            self.Researcher = self.all_researchers[0]
+        else:
+            self.Researcher = None
+
+        # --- UNNORMAL INTERVAL FORCE-END ---
         if not self.start_trial and not self.end_session and self.trial_num in self.unnormal_intervals:
             _, end_block_abs = self.unnormal_intervals[self.trial_num]
             current_abs_minutes = (self.frame_time / (1000 * 60)) % 60
-            
+
             if current_abs_minutes >= end_block_abs:
                 self.normal_trial = False
                 self.NGL = False
                 self.probe = False
                 self.reached = False
                 self.end_trial()
-                self.start_trial = True  
-                self.check = False       
-                return
-
-        # --- REVISED RESEARCHER TRIGGER LOGIC ---
-        if self.Researcher and active_rat_pos and not self.record_detections:
-            dist = points_dist(active_rat_pos, self.Researcher)
-
-            if self.counter > 0 and (self.counter - 1) < len(self.trial_types):
-                previous_trial_type = int(self.trial_types[self.counter - 1])
-            else:
-                previous_trial_type = 1
-
-            is_special_lockout = previous_trial_type in [4, 5, 6]
-            
-            time_since_trial_start = self.frame_time - getattr(self, 'last_trial_start_time_ms', -1e9)
-            
-            can_trigger = True
-            if is_special_lockout:
-                if time_since_trial_start < self.lockout_duration_ms:
-                    can_trigger = False
-                    remaining_sec = int((self.lockout_duration_ms - time_since_trial_start) / 1000)
-                    cv2.putText(self.disp_frame, f"LOCKOUT: {remaining_sec}s", (60, 110), 
-                                font, 1, (0, 0, 255), 2)
-                else:
-                    cv2.putText(self.disp_frame, "READY: Researcher can start trial", (60, 110), 
-                                font, 1, (0, 255, 0), 2)
-
-            if (not self.start_trial and not self.end_session and 
-                not self.record_detections and dist <= 300 and can_trigger): 
-                
-                print(f">>> Lockout finished/not required. Starting Trial {self.trial_num}")
                 self.start_trial = True
                 self.check = False
-        # ----------------------------------------
+                return
 
+        # --- RESEARCHER TRIGGER: start next trial (closest researcher to RAT) ---
+        if active_rat_pos and not self.record_detections:
+            closest_to_rat = self.closest_researcher_to(active_rat_pos)
+
+            if closest_to_rat is not None:
+                dist = points_dist(active_rat_pos, closest_to_rat)
+
+                if self.counter > 0 and (self.counter - 1) < len(self.trial_types):
+                    previous_trial_type = int(self.trial_types[self.counter - 1])
+                else:
+                    previous_trial_type = 1
+
+                is_special_lockout = previous_trial_type in [4, 5, 6]
+
+                time_since_trial_start = self.frame_time - getattr(self, 'last_trial_start_time_ms', -1e9)
+
+                can_trigger = True
+                if is_special_lockout:
+                    if time_since_trial_start < self.lockout_duration_ms:
+                        can_trigger = False
+                        remaining_sec = int((self.lockout_duration_ms - time_since_trial_start) / 1000)
+                        cv2.putText(self.disp_frame, f"LOCKOUT: {remaining_sec}s", (60, 110),
+                                    font, 1, (0, 0, 255), 2)
+                    else:
+                        cv2.putText(self.disp_frame, "READY: Researcher can start trial", (60, 110),
+                                    font, 1, (0, 255, 0), 2)
+
+                if (not self.start_trial and not self.end_session and
+                    not self.record_detections and dist <= 80 and can_trigger):
+
+                    print(f">>> Lockout finished/not required. Starting Trial {self.trial_num}")
+                    self.start_trial = True
+                    self.check = False
+
+        # --- RAT DETECTION + TRIAL LOGIC ---
         if active_rat_pos:
             if self.start_trial:
                 self.find_start(active_rat_pos)
-            
+
             if self.record_detections:
                 if detected_head_this_frame:
                     self.count_head += 1
                 elif detected_rat_body_this_frame:
                     self.count_rat += 1
-                
+
                 self.object_detection(rat=active_rat_pos)
-                
-                # <<< FIX: Re-check record_detections AFTER object_detection,
+
+                # Re-check record_detections AFTER object_detection,
                 # because object_detection -> end_trial() may have set it to False.
-                # Without this guard, the timer below fires on the same frame
-                # that the trial already ended, causing a double end_trial().
-                if self.record_detections and self.Researcher is not None and self.goal_location is not None:
-                    dist_to_goal = points_dist(self.Researcher, self.goal_location)
-                    
-                    if dist_to_goal <= 50:
+                if self.record_detections and self.goal_location is not None:
+                    # Use closest researcher to the GOAL for 10s force-end
+                    closest_to_goal = self.closest_researcher_to(self.goal_location)
+
+                    if closest_to_goal is not None:
+                        dist_to_goal = points_dist(closest_to_goal, self.goal_location)
+
+                        if dist_to_goal <= 50:
+                            self.researcher_goal_timer += (1.0 / self.vid_fps)
+
+                            if self.researcher_goal_timer >= 10.0:
+                                self.normal_trial = False
+                                self.NGL = False
+                                self.probe = False
+                                self.end_trial()
+                                self.researcher_goal_timer = 0.0
+                        else:
+                            self.researcher_goal_timer = 0.0
+
+        # --- RESEARCHER AT GOAL: 30-second force-end (closest to GOAL) ---
+        if self.record_detections and self.goal_location is not None:
+            closest_to_goal = self.closest_researcher_to(self.goal_location)
+
+            if closest_to_goal is not None:
+                dist_to_goal = points_dist(closest_to_goal, self.goal_location)
+
+                if dist_to_goal <= 80:
+
+                    allow_end = True
+
+                    if self.probe:
+                        current_min = (self.frame_time / (1000 * 60)) % 60
+                        duration = current_min - self.start_time
+                        if duration < 0: duration += 60
+                        if duration < 2.0:
+                            allow_end = False
+
+                    if self.check_immunity():
+                        allow_end = False
+
+                    if allow_end:
                         self.researcher_goal_timer += (1.0 / self.vid_fps)
-                        
-                        if self.researcher_goal_timer >= 10.0:
+
+                        if self.researcher_goal_timer >= 30.0:
                             self.normal_trial = False
                             self.NGL = False
                             self.probe = False
+
                             self.end_trial()
                             self.researcher_goal_timer = 0.0
                     else:
                         self.researcher_goal_timer = 0.0
 
-        # <<< FIX: Guard this entire block with record_detections.
-        # Previously this ran EVERY frame unconditionally, so after a trial ended
-        # it kept accumulating researcher_goal_timer and would call end_trial()
-        # again (skipping the next trial). This was the main cause of trials
-        # being skipped and the next start node never appearing after trial 15.
-        if self.record_detections and self.Researcher is not None and self.goal_location is not None:
-            dist_to_goal = points_dist(self.Researcher, self.goal_location)
-            
-            if dist_to_goal <= 80:
-                
-                allow_end = True
-
-                if self.probe:
-                    current_min = (self.frame_time / (1000 * 60)) % 60
-                    duration = current_min - self.start_time
-                    if duration < 0: duration += 60
-                    if duration < 2.0:
-                        allow_end = False
-
-                if self.check_immunity():
-                    allow_end = False
-                    
-                if allow_end:
-                    self.researcher_goal_timer += (1.0 / self.vid_fps)
-                    
-                    if self.researcher_goal_timer >= 30.0:
-                        self.normal_trial = False
-                        self.NGL = False
-                        self.probe = False
-                        
-                        self.end_trial()
-                        self.researcher_goal_timer = 0.0
-                else:
-                    self.researcher_goal_timer = 0.0
-
+        # --- RESEARCHER COVERING START NODE (closest to START NODE) ---
         researcher_covers_start = False
-        if (not self.start_trial and not self.record_detections and 
+        if (not self.start_trial and not self.record_detections and
             not self.end_session and self.counter < len(self.start_nodes_locations)):
-            
-            self.start_node_center = self.start_nodes_locations[self.counter]
 
-            if self.Researcher is not None: 
-                dist_to_start = points_dist(self.Researcher, self.start_node_center)
+            self.start_node_center = self.start_nodes_locations[self.counter]
+            closest_to_start = self.closest_researcher_to(self.start_node_center)
+
+            if closest_to_start is not None:
+                dist_to_start = points_dist(closest_to_start, self.start_node_center)
                 if dist_to_start <= 40:
                     researcher_covers_start = True
 
@@ -696,6 +715,61 @@ class Tracker:
                 if self.covering_start_node:
                     self.covering_start_node = False
                     self.cover_start_timer = 0.0
+
+    def object_detection(self, rat):
+        self.pos_centroid = rat
+        self.centroid_list.append(self.pos_centroid)
+
+        is_immune = self.check_immunity()
+        is_did_not_reach = (self.counter < len(self.did_not_reach_list) and
+                            self.did_not_reach_list[self.counter] == 1)
+
+        if self.NGL:
+            minutes = self.timer(start=self.start_time)
+            if not self.reached:
+                if points_dist(self.pos_centroid, self.goal_location) <= 20:
+                    self.reached = True
+            if minutes >= 10:
+                print('\n\n >>> Ten minute passed... Goal location reached:', self.reached)
+                if self.reached:
+                    if not is_immune:
+                        print('\n\n >>> End New Goal Location Trial - timeout', self.trial_num, ' out of ',
+                            self.num_trials)
+                        self.NGL = False
+                        self.reached = False
+                        self.end_trial()
+
+        if self.probe:
+            minutes = self.timer(start=self.start_time)
+            if minutes >= 2:
+                if points_dist(self.pos_centroid, self.goal_location) <= self.goal_node_radius:
+                    if not is_immune:
+                        self.probe = False
+                        self.end_trial()
+                    else:
+                        pass
+
+        if self.normal_trial:
+            if not is_did_not_reach:
+                if points_dist(self.pos_centroid, self.goal_location) <= self.goal_node_radius:
+                    if not is_immune:
+                        self.normal_trial = False
+                        self.end_trial()
+            else:
+                # "Did Not Reach" end logic: trial ends when rat is picked up by researcher
+                # Use closest researcher to the RAT for pickup detection
+                closest_to_rat = self.closest_researcher_to(self.pos_centroid)
+                if closest_to_rat is not None:
+                    dist_to_researcher = points_dist(self.pos_centroid, closest_to_rat)
+                    if dist_to_researcher <= 60:
+                        self.pickup_timer += (1.0 / self.vid_fps)
+                        if self.pickup_timer >= 1.0:
+                            print(f'\n\n >>> Did Not Reach: Trial {self.trial_num} ended - rat picked up by researcher')
+                            self.normal_trial = False
+                            self.end_trial()
+                            self.pickup_timer = 0.0
+                    else:
+                        self.pickup_timer = 0.0
 
     def object_detection(self, rat):
         self.pos_centroid = rat
