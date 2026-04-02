@@ -151,6 +151,18 @@ def extract_lfp_and_sort(file_path, output_parent, target_fs=1000.0):
             shutil.rmtree(cache_dir)
         except PermissionError:
             print(f"Warning: Windows locked {cache_dir}. Delete manually later.")
+            
+    lfp_for_awake = rec_lfp_cached.get_traces()
+    emg_for_awake = rec_emg_cached.get_traces()
+    actual_fs = fs_orig / decimation_factor
+
+    awakeness, emg_rms, theta_delta = compute_awakeness(
+        lfp_for_awake, emg_for_awake, actual_fs, best_ch_idx
+    )
+
+    np.save(output_dir / "awakeness.npy", awakeness.astype('float32'))
+    np.save(output_dir / "emg_rms.npy", emg_rms.astype('float32'))
+    np.save(output_dir / "theta_delta_ratio.npy", theta_delta.astype('float32'))
 
     print(f"\n=== All files saved to {output_dir} ===")
     print(f"  lfp_data.npy           — all channels, 1-450 Hz")
@@ -159,7 +171,51 @@ def extract_lfp_and_sort(file_path, output_parent, target_fs=1000.0):
     print(f"  emg_data.npy           — EMG from channel {emg_ch}, 10-100 Hz")
     print(f"  emg_channel_index.npy  — EMG channel index")
 
-
+def compute_awakeness(lfp_data, emg_data, fs, best_ch_idx, epoch_s=1):
+    """
+    Compute a per-second awakeness score from EEG + EMG.
+    
+    High values = likely awake
+    Low values  = likely NREM
+    Intermediate with low EMG = likely REM
+    """
+    from scipy.signal import welch
+    from scipy.stats import zscore
+    
+    n_seconds = int(lfp_data.shape[0] / fs)
+    n_per_epoch = int(fs * epoch_s)
+    
+    # Use the best EEG channel
+    eeg = lfp_data[:, best_ch_idx[0]]
+    emg = emg_data[:, 0]
+    
+    emg_power = np.zeros(n_seconds)
+    theta_delta = np.zeros(n_seconds)
+    
+    for i in range(n_seconds):
+        start = i * n_per_epoch
+        end_ = start + n_per_epoch
+        
+        # EMG RMS
+        emg_seg = emg[start:end_]
+        emg_power[i] = np.sqrt(np.mean(emg_seg ** 2))
+        
+        # Theta/Delta ratio from EEG
+        eeg_seg = eeg[start:end_]
+        f, psd = welch(eeg_seg, fs=fs, nperseg=min(n_per_epoch, int(2 * fs)))
+        delta = np.mean(psd[(f >= 0.5) & (f <= 4)])
+        theta = np.mean(psd[(f >= 5) & (f <= 9)])
+        theta_delta[i] = theta / (delta + 1e-12)
+    
+    # Z-score both, then combine
+    emg_z = zscore(emg_power)
+    td_z = zscore(theta_delta)
+    
+    # Awakeness = weighted sum (EMG dominates for wake vs sleep,
+    # theta/delta helps separate REM from wake)
+    awakeness = 0.6 * emg_z + 0.4 * td_z
+    
+    return awakeness, emg_power, theta_delta
 def run_pipeline(input_folder, output_folder):
     base_path = Path(input_folder)
     dat_files = list(base_path.glob("**/*.raw/*_group0.dat"))
