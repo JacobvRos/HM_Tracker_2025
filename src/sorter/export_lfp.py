@@ -285,8 +285,8 @@ def extract_lfp_and_sort(file_path, output_parent, target_fs=1000.0):
         # ── 3. LFP CACHE ─────────────────────────────────────────────────────
         tqdm.write("Step 3/8 — Streaming LFP (1–450 Hz → resample to 1 kHz)")
         rec_filtered = spre.bandpass_filter(rec, freq_min=1.0, freq_max=450.0)
-        rec_lfp      = spre.resample(rec_filtered,
-                                     resample_rate=int(target_fs))
+        rec_lfp      = spre.decimate(rec_filtered, decimation_factor=int(fs_orig / target_fs))
+        
         temp_lfp_cache = output_dir / "temp_si_cache"
         if temp_lfp_cache.exists():
             shutil.rmtree(temp_lfp_cache)
