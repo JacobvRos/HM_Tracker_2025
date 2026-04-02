@@ -42,7 +42,6 @@ def load_recording(file_path, output_dir, voltage_scale_default=0.195):
                f"|  shape={traces.shape}  dtype={traces.dtype}")
 
     if isinstance(traces, np.memmap):
-        # ── Fast path: traces already lives on disk ──────────────────────────
         tqdm.write("  ✓ Traces are a memmap — using file directly "
                    "(no copy needed)")
         rec = si.BinaryRecordingExtractor(
@@ -59,11 +58,8 @@ def load_recording(file_path, output_dir, voltage_scale_default=0.195):
         gc.collect()
 
     else:
-        # ── Fallback: plain ndarray — write to temp binary in chunks ---------
-        # (only hit on small files that fit in RAM; for >64 GB files
-        #  readTrodesExtractedDataFile will have returned a memmap above)
         temp_raw_bin  = output_dir / "temp_raw.raw"
-        traces_dtype  = str(traces.dtype)   # save before del
+        traces_dtype  = str(traces.dtype)
         traces_shape  = traces.shape
 
         if temp_raw_bin.exists():
@@ -104,7 +100,7 @@ def load_recording(file_path, output_dir, voltage_scale_default=0.195):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# MEMORY-SAFE I/O HELPERS
+# MEMORY-SAFE I/O HELPER
 # ──────────────────────────────────────────────────────────────────────────────
 
 def load_binary_memmap(cache_dir, n_channels, dtype='float32'):
@@ -118,22 +114,6 @@ def load_binary_memmap(cache_dir, n_channels, dtype='float32'):
     n_samples = bin_file.stat().st_size // (itemsize * n_channels)
     return np.memmap(bin_file, dtype=dtype, mode='r',
                      shape=(n_samples, n_channels))
-
-
-def save_in_chunks(src, out_path, chunk_size=100_000, dtype='float32',
-                   desc="  Saving"):
-    """Write array-like to .npy in fixed-size row chunks."""
-    n_samples, n_channels = src.shape
-    out = np.lib.format.open_memmap(
-        out_path, mode='w+', dtype=dtype, shape=(n_samples, n_channels)
-    )
-    n_chunks = int(np.ceil(n_samples / chunk_size))
-    with tqdm(total=n_chunks, unit='chunk', desc=desc, leave=False) as pb:
-        for start in range(0, n_samples, chunk_size):
-            end = min(start + chunk_size, n_samples)
-            out[start:end] = src[start:end].astype(dtype)
-            pb.update(1)
-    del out
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -185,28 +165,30 @@ def select_emg_channel(rec, fs_orig, segment_duration_s=60):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# AWAKENESS
+# AWAKENESS  (per-epoch → upsampled to per-sample)
 # ──────────────────────────────────────────────────────────────────────────────
 
-def compute_awakeness(lfp_path, emg_path, fs, best_ch_idx, epoch_s=1):
+def compute_awakeness(lfp_path, emg_path, fs, best_ch_idx, n_lfp_samples,
+                      epoch_s=1):
     """
-    Per-second awakeness score from mmap'd .npy files — one epoch in RAM
-    at a time.   High → awake  |  Low → NREM  |  Mid + low EMG → REM
+    Per-second awakeness score from mmap'd .npy files, then linearly
+    interpolated to match the full LFP sample count so that
+    len(awakeness) == n_lfp_samples.
     """
     lfp = np.load(lfp_path, mmap_mode='r')
     emg = np.load(emg_path, mmap_mode='r')
 
     n_samples   = lfp.shape[0]
     n_per_epoch = int(fs * epoch_s)
-    n_seconds   = n_samples // n_per_epoch
+    n_epochs    = n_samples // n_per_epoch
     eeg_ch      = int(best_ch_idx[0])
 
-    emg_power   = np.zeros(n_seconds, dtype='float32')
-    theta_delta = np.zeros(n_seconds, dtype='float32')
+    emg_power   = np.zeros(n_epochs, dtype='float32')
+    theta_delta = np.zeros(n_epochs, dtype='float32')
 
-    with tqdm(total=n_seconds, unit='s', desc="  Awakeness epochs",
+    with tqdm(total=n_epochs, unit='s', desc="  Awakeness epochs",
               leave=False) as pb:
-        for i in range(n_seconds):
+        for i in range(n_epochs):
             s = i * n_per_epoch
             e = s + n_per_epoch
             emg_seg = np.array(emg[s:e, 0],      dtype='float64')
@@ -221,9 +203,24 @@ def compute_awakeness(lfp_path, emg_path, fs, best_ch_idx, epoch_s=1):
             theta_delta[i] = theta / (delta + 1e-12)
             pb.update(1)
 
-    emg_z     = zscore(emg_power)
-    td_z      = zscore(theta_delta)
-    return (0.6 * emg_z + 0.4 * td_z).astype('float32'), emg_power, theta_delta
+    emg_z = zscore(emg_power)
+    td_z  = zscore(theta_delta)
+    awakeness_epochs = (0.6 * emg_z + 0.4 * td_z).astype('float32')
+
+    # ── Upsample epoch-level → sample-level to match LFP length ──────────
+    tqdm.write(f"  Upsampling awakeness from {n_epochs} epochs → "
+               f"{n_lfp_samples} samples")
+    epoch_times  = (np.arange(n_epochs) + 0.5) * n_per_epoch   # epoch centres
+    sample_times = np.arange(n_lfp_samples, dtype='float64')
+    awakeness    = np.interp(sample_times, epoch_times,
+                             awakeness_epochs).astype('float32')
+
+    emg_power_up   = np.interp(sample_times, epoch_times,
+                               emg_power).astype('float32')
+    theta_delta_up = np.interp(sample_times, epoch_times,
+                               theta_delta).astype('float32')
+
+    return awakeness, emg_power_up, theta_delta_up
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -236,8 +233,8 @@ STEPS = [
     "Stream LFP to cache",
     "Select EEG channels",
     "Stream EMG to cache",
-    "Write LFP .npy",
-    "Write EMG .npy",
+    "Save LFP .npy",
+    "Save EMG .npy",
     "Compute awakeness",
 ]
 
@@ -281,12 +278,12 @@ def extract_lfp_and_sort(file_path, output_parent, target_fs=1000.0):
         probe.set_contacts(positions=positions, shapes='circle',
                            shape_params={'radius': 5})
         probe.set_device_channel_indices(np.arange(num_channels))
-        rec = rec.set_probe(probe)   # deepcopy is now tiny ✓
+        rec = rec.set_probe(probe)
         tqdm.write("  ✓ Probe attached")
         advance(2)
 
         # ── 3. LFP CACHE ─────────────────────────────────────────────────────
-        tqdm.write("Step 3/8 — Streaming LFP (1–450 Hz → decimate to 1 kHz)")
+        tqdm.write("Step 3/8 — Streaming LFP (1–450 Hz → resample to 1 kHz)")
         rec_filtered = spre.bandpass_filter(rec, freq_min=1.0, freq_max=450.0)
         rec_lfp      = spre.resample(rec_filtered,
                                      resample_rate=int(target_fs))
@@ -322,23 +319,24 @@ def extract_lfp_and_sort(file_path, output_parent, target_fs=1000.0):
         tqdm.write("  ✓ EMG cache written")
         advance(5)
 
-        # ── 6. WRITE LFP .npy ────────────────────────────────────────────────
-        tqdm.write("Step 6/8 — Writing LFP .npy (chunked)")
+        # ── 6. SAVE LFP .npy (continuous, directly from cache) ───────────────
+        tqdm.write("Step 6/8 — Saving LFP .npy (continuous from cache)")
         lfp_out  = output_dir / "lfp_data.npy"
         lfp_mmap = load_binary_memmap(temp_lfp_cache, num_channels)
-        save_in_chunks(lfp_mmap, lfp_out, desc="  Writing lfp_data.npy")
-        timestamps = (np.arange(lfp_mmap.shape[0]) / actual_fs).astype('float64')
+        n_lfp_samples = lfp_mmap.shape[0]
+        np.save(lfp_out, np.array(lfp_mmap))
+        timestamps = (np.arange(n_lfp_samples) / actual_fs).astype('float64')
         np.save(output_dir / "lfp_timestamps.npy", timestamps)
         np.save(output_dir / "lfp_channels.npy", np.arange(num_channels))
         tqdm.write(f"  ✓ lfp_data.npy  {lfp_mmap.shape}")
         del lfp_mmap
         advance(6)
 
-        # ── 7. WRITE EMG .npy ────────────────────────────────────────────────
-        tqdm.write("Step 7/8 — Writing EMG .npy (chunked)")
+        # ── 7. SAVE EMG .npy (continuous, directly from cache) ───────────────
+        tqdm.write("Step 7/8 — Saving EMG .npy (continuous from cache)")
         emg_out  = output_dir / "emg_data.npy"
         emg_mmap = load_binary_memmap(temp_emg_cache, 1)
-        save_in_chunks(emg_mmap, emg_out, desc="  Writing emg_data.npy")
+        np.save(emg_out, np.array(emg_mmap))
         tqdm.write(f"  ✓ emg_data.npy  {emg_mmap.shape}")
         del emg_mmap
         gc.collect()
@@ -351,15 +349,17 @@ def extract_lfp_and_sort(file_path, output_parent, target_fs=1000.0):
                            "(Windows lock). Delete manually.")
         advance(7)
 
-        # ── 8. AWAKENESS ─────────────────────────────────────────────────────
-        tqdm.write("Step 8/8 — Computing awakeness score (epoch-by-epoch)")
+        # ── 8. AWAKENESS (sample-level, same length as LFP) ──────────────────
+        tqdm.write("Step 8/8 — Computing awakeness score "
+                   "(epoch → interpolated to LFP length)")
         awakeness, emg_rms, theta_delta = compute_awakeness(
-            lfp_out, emg_out, actual_fs, best_ch_idx
+            lfp_out, emg_out, actual_fs, best_ch_idx,
+            n_lfp_samples=n_lfp_samples
         )
-        np.save(output_dir / "awakeness.npy",          awakeness)
-        np.save(output_dir / "emg_rms.npy",            emg_rms.astype('float32'))
-        np.save(output_dir / "theta_delta_ratio.npy",   theta_delta.astype('float32'))
-        advance(8)   # completes the bar
+        np.save(output_dir / "awakeness.npy",         awakeness)
+        np.save(output_dir / "emg_rms.npy",           emg_rms)
+        np.save(output_dir / "theta_delta_ratio.npy",  theta_delta)
+        advance(8)
 
     tqdm.write(f"\n{'='*60}")
     tqdm.write(f"✅  All outputs → {output_dir}")
@@ -370,9 +370,9 @@ def extract_lfp_and_sort(file_path, output_parent, target_fs=1000.0):
     tqdm.write(f"   channel_snr_scores.npy       SNR scores (all channels)")
     tqdm.write(f"   emg_data.npy                 channel {emg_ch}, 10-100 Hz")
     tqdm.write(f"   emg_channel_index.npy        EMG channel index")
-    tqdm.write(f"   awakeness.npy                per-second awakeness score")
-    tqdm.write(f"   emg_rms.npy                  per-second EMG RMS")
-    tqdm.write(f"   theta_delta_ratio.npy        per-second θ/δ ratio")
+    tqdm.write(f"   awakeness.npy                per-sample awakeness ({n_lfp_samples} samples)")
+    tqdm.write(f"   emg_rms.npy                  per-sample EMG RMS ({n_lfp_samples} samples)")
+    tqdm.write(f"   theta_delta_ratio.npy        per-sample θ/δ ratio ({n_lfp_samples} samples)")
     tqdm.write(f"{'='*60}")
 
 
