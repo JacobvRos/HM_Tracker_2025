@@ -22,69 +22,40 @@ except ImportError:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def load_recording(file_path, output_dir, voltage_scale_default=0.195):
-    """
-    1. Call readTrodesExtractedDataFile to get traces + metadata.
-    2. If traces is already a memmap  → point BinaryRecordingExtractor at the
-       same file (zero extra disk/RAM).
-    3. If traces is a plain ndarray   → write it once to a temp binary file
-       in chunks, free the ndarray, then use BinaryRecordingExtractor.
-    4. Either way, set_probe() only deepcopies tiny path metadata — no OOM.
-    """
     tqdm.write("  Loading with readTrodesExtractedDataFile …")
     raw          = readTrodesExtractedDataFile(str(file_path))
     traces       = raw['data']['voltage']
     num_channels = traces.shape[1]
+    n_samples    = traces.shape[0]
     fs_orig      = float(raw.get('samplingRate', 30000))
     voltage_scale = float(raw.get('voltageScaling', voltage_scale_default))
 
-    tqdm.write(f"  ✓ {num_channels} channels  |  {fs_orig} Hz  "
-               f"|  scale={voltage_scale} µV/count  "
-               f"|  shape={traces.shape}  dtype={traces.dtype}")
+    # ── 逐 channel 写入 memmap ──
+    temp_npy = output_dir / "temp_raw.npy"
+    out_dtype = 'float32'
 
-    if isinstance(traces, np.memmap):
-        tqdm.write("  ✓ Traces are a memmap — using file directly "
-                   "(no copy needed)")
-        rec = si.BinaryRecordingExtractor(
-            file_paths         = [traces.filename],
-            sampling_frequency = fs_orig,
-            num_channels       = num_channels,
-            dtype              = str(traces.dtype),
-            time_axis          = 0,
-            file_offset        = traces.offset,
-            gain_to_uV         = voltage_scale,
-            offset_to_uV       = 0.0,
-        )
-        del traces, raw
-        gc.collect()
+    if not temp_npy.exists():
+        fp = np.memmap(temp_npy, dtype=out_dtype, mode='w+',
+                       shape=(n_samples, num_channels))
+        for ch in tqdm(range(num_channels), desc="  Writing channels",
+                       unit='ch', leave=False):
+            fp[:, ch] = traces[:, ch]
+            fp.flush()
+        del fp
 
-    else:
-        # ── 大文件方案：分块写入连续的 .raw，再用 BinaryRecordingExtractor ──
-        temp_raw_bin = output_dir / "temp_raw.raw"
-        out_dtype    = 'int16'  # 保持原始 dtype 省空间
+    del traces, raw
+    gc.collect()
 
-        if not temp_raw_bin.exists():
-            n_samples  = traces.shape[0]
-            chunk_size = 100_000
-            fp = np.memmap(temp_raw_bin, dtype=out_dtype, mode='w+',
-                        shape=(n_samples, num_channels))
-            for start in range(0, n_samples, chunk_size):
-                end = min(start + chunk_size, n_samples)
-                # np.array() 强制 copy，把 structured view 变成连续内存
-                fp[start:end] = np.array(traces[start:end], dtype=out_dtype)
-            del fp
-        del traces, raw
-        gc.collect()
+    # ── memmap 直接当 ndarray 传给 NumpyRecording ──
+    traces_mmap = np.memmap(temp_npy, dtype=out_dtype, mode='r',
+                            shape=(n_samples, num_channels))
 
-        rec = si.BinaryRecordingExtractor(
-            file_paths         = [str(temp_raw_bin)],
-            sampling_frequency = fs_orig,
-            num_channels       = num_channels,
-            dtype              = out_dtype,
-            time_axis          = 0,
-            file_offset        = 0,        # 我们自己写的文件，没有 header
-            gain_to_uV         = voltage_scale,
-            offset_to_uV       = 0.0,
-        )
+    rec = si.NumpyRecording(
+        traces_list        = [traces_mmap],
+        sampling_frequency = fs_orig,
+    )
+    rec.set_channel_gains(voltage_scale)
+    rec.set_channel_offsets(0.0)
 
     return rec, num_channels, fs_orig, voltage_scale
 
