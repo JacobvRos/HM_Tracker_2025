@@ -248,7 +248,7 @@ def extract_lfp_and_sort(file_path, output_parent, target_fs=1000.0):
     output_dir    = Path(output_parent) / f"{file_stem}_LFP_Output"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    job_kwargs = dict(n_jobs=1, chunk_duration='30s', progress_bar=True)
+    job_kwargs = dict(n_jobs=4, chunk_duration='30s', progress_bar=True)
 
     fmt = ("{l_bar}{bar}| {n_fmt}/{total_fmt} steps  "
            "[{elapsed}<{remaining}]")
