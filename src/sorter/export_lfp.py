@@ -257,7 +257,8 @@ def extract_lfp_and_sort(file_path, output_parent, target_fs=1000.0):
               bar_format=fmt) as sp:
 
         def advance(i):
-            sp.set_description(f"[{STEPS[i]}]")
+            if i < len(STEPS):
+                sp.set_description(f"[{STEPS[i]}]")
             sp.update(1)
 
         # ── 1. LOAD FILE ─────────────────────────────────────────────────────
