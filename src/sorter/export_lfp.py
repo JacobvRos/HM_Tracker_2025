@@ -58,40 +58,30 @@ def load_recording(file_path, output_dir, voltage_scale_default=0.195):
         gc.collect()
 
     else:
-        temp_raw_bin  = output_dir / "temp_raw.raw"
-        traces_dtype  = str(traces.dtype)
-        traces_shape  = traces.shape
+        # ── 大文件方案：分块写入连续的 .raw，再用 BinaryRecordingExtractor ──
+        temp_raw_bin = output_dir / "temp_raw.raw"
+        out_dtype    = 'int16'  # 保持原始 dtype 省空间
 
-        if temp_raw_bin.exists():
-            tqdm.write(f"  ✓ Temp binary already exists — skipping write")
-            del traces, raw
-            gc.collect()
-        else:
-            tqdm.write("  Traces are a plain ndarray — writing temp binary …")
-            n_samples  = traces_shape[0]
+        if not temp_raw_bin.exists():
+            n_samples  = traces.shape[0]
             chunk_size = 100_000
-
-            with tqdm(total=int(np.ceil(n_samples / chunk_size)),
-                      unit='chunk', desc="  Writing temp raw", leave=False) as pb:
-                fp = np.memmap(temp_raw_bin, dtype=traces_dtype, mode='w+',
-                               shape=traces_shape)
-                for start in range(0, n_samples, chunk_size):
-                    end = min(start + chunk_size, n_samples)
-                    fp[start:end] = traces[start:end]
-                    pb.update(1)
-                del fp
-
-            del traces, raw
-            gc.collect()
-            tqdm.write(f"  ✓ Temp binary written to {temp_raw_bin}")
+            fp = np.memmap(temp_raw_bin, dtype=out_dtype, mode='w+',
+                        shape=(n_samples, num_channels))
+            for start in range(0, n_samples, chunk_size):
+                end = min(start + chunk_size, n_samples)
+                # np.array() 强制 copy，把 structured view 变成连续内存
+                fp[start:end] = np.array(traces[start:end], dtype=out_dtype)
+            del fp
+        del traces, raw
+        gc.collect()
 
         rec = si.BinaryRecordingExtractor(
             file_paths         = [str(temp_raw_bin)],
             sampling_frequency = fs_orig,
             num_channels       = num_channels,
-            dtype              = traces_dtype,
+            dtype              = out_dtype,
             time_axis          = 0,
-            file_offset        = 0,
+            file_offset        = 0,        # 我们自己写的文件，没有 header
             gain_to_uV         = voltage_scale,
             offset_to_uV       = 0.0,
         )
@@ -286,7 +276,7 @@ def extract_lfp_and_sort(file_path, output_parent, target_fs=1000.0):
         tqdm.write("Step 3/8 — Streaming LFP (1–450 Hz → resample to 1 kHz)")
         rec_filtered = spre.bandpass_filter(rec, freq_min=1.0, freq_max=450.0)
         rec_lfp      = spre.decimate(rec_filtered, decimation_factor=int(fs_orig / target_fs))
-        
+
         temp_lfp_cache = output_dir / "temp_si_cache"
         if temp_lfp_cache.exists():
             shutil.rmtree(temp_lfp_cache)
