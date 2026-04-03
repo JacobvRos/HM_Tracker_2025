@@ -178,11 +178,11 @@ if %errorlevel% equ 0 (
 :: --- STEP e (LFP export) ---
 echo %STEPS_TO_RUN% | findstr "e" >nul
 if %errorlevel% equ 0 (
-    echo [STEP e] Running Trodes LFP Export...
+    echo [STEP e] Running Trodes LFP Export ^(1000Hz, LP 500Hz^)...
     if exist "%TRODES_EXPORT_LFP%" (
         for %%F in ("%IP%\*.rec") do (
             echo     Exporting LFP from %%~nxF
-            "%TRODES_EXPORT_LFP%" -rec "%%F"
+            "%TRODES_EXPORT_LFP%" -rec "%%F" -outputrate 1000 -lfplowpass 500
         )
     ) else (
         echo [WARNING] exportLFP not found at: %TRODES_EXPORT_LFP%
