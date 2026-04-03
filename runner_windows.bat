@@ -21,6 +21,8 @@ if not exist "%CONFIG_FILE%" (
     echo   FFMPEG_CMD=C:\path\to\ffmpeg.exe
     echo   ONNX_WEIGHTS_PATH=C:\path\to\weights.pt
     echo   TRODES_EXPORT_CMD=C:\path\to\trodesexport.exe
+    echo   TRODES_EXPORT_LFP=C:\path\to\exportLFP.exe
+    echo   LFP_CHANNELS=1 2 3 4 5 6 7 8
     echo.
     echo See hm_tracker_paths.example.txt in the repo for a template.
     pause
@@ -54,7 +56,7 @@ if "%~1"=="" (
 
 :: --- NEW: STEP SELECTION MENU ---
 echo Select steps to run (e.g., 123 for steps 1, 2, and 3):
-echo [1] Trodes Export
+echo [1] Trodes Export (DIO/Raw + LFP per channel)
 echo [2] Sync Script
 echo [3] Stitching
 echo [4] Tracker
@@ -164,9 +166,21 @@ echo [INFO] Running steps [%STEPS_TO_RUN%] for !IP!
 :: --- STEP 1 ---
 echo %STEPS_TO_RUN% | findstr "1" >nul
 if %errorlevel% equ 0 (
-    echo [STEP 1] Running Trodes...
+    echo [STEP 1a] Running Trodes DIO/Raw Export...
     if exist "%TRODES_EXPORT_CMD%" (
         for %%F in ("%IP%\*.rec") do ("%TRODES_EXPORT_CMD%" -dio -raw -rec "%%F")
+    )
+
+    echo [STEP 1b] Running Trodes LFP Export ^(per channel^)...
+    if exist "%TRODES_EXPORT_LFP%" (
+        for %%F in ("%IP%\*.rec") do (
+            for %%C in (%LFP_CHANNELS%) do (
+                echo     Exporting LFP ch %%C from %%~nxF
+                "%TRODES_EXPORT_LFP%" -rec "%%F" -channels %%C
+            )
+        )
+    ) else (
+        echo [WARNING] exportLFP not found at: %TRODES_EXPORT_LFP%
     )
 )
 
