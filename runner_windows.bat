@@ -175,16 +175,14 @@ if %errorlevel% equ 0 (
     )
 )
 
-:: --- STEP e (LFP export, per channel) ---
+:: --- STEP e (LFP export) ---
 echo %STEPS_TO_RUN% | findstr "e" >nul
 if %errorlevel% equ 0 (
-    echo [STEP e] Running Trodes LFP Export ^(per channel^)...
+    echo [STEP e] Running Trodes LFP Export...
     if exist "%TRODES_EXPORT_LFP%" (
         for %%F in ("%IP%\*.rec") do (
-            for %%C in (%LFP_CHANNELS%) do (
-                echo     Exporting LFP ch %%C from %%~nxF
-                "%TRODES_EXPORT_LFP%" -rec "%%F" -chan %%C
-            )
+            echo     Exporting LFP from %%~nxF
+            "%TRODES_EXPORT_LFP%" -rec "%%F"
         )
     ) else (
         echo [WARNING] exportLFP not found at: %TRODES_EXPORT_LFP%
