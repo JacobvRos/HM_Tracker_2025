@@ -9,11 +9,31 @@ from tqdm import tqdm
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# PARSE TRODES HEADER + MEMMAP  (zero-RAM replacement for readTrodesExtracted)
+# TRODES OFFICIAL READER (from readTrodesExtractedDataFile3.py)
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _parse_trodes_fields(fieldstr):
-    """Identical dtype parser from readTrodesExtractedDataFile3."""
+def readTrodesExtractedDataFile(filename):
+    with open(filename, 'rb') as f:
+        if f.readline().decode('ascii').strip() != '<Start settings>':
+            raise Exception("Settings format not supported")
+        fields = True
+        fieldsText = {}
+        for line in f:
+            if fields:
+                line = line.decode('ascii').strip()
+                if line != '<End settings>':
+                    vals = line.split(': ')
+                    fieldsText.update({vals[0].lower(): vals[1]})
+                else:
+                    fields = False
+                    break
+        dt = _parseFields(fieldsText['fields'])
+        data = np.fromfile(f, dt)
+        fieldsText.update({'data': data})
+        return fieldsText
+
+
+def _parseFields(fieldstr):
     sep = re.split(r'\s', re.sub(r"\>\<|\>|\<", ' ', fieldstr).strip())
     typearr = []
     for i in range(0, len(sep), 2):
@@ -21,43 +41,14 @@ def _parse_trodes_fields(fieldstr):
         repeats = 1
         ftype = 'uint32'
         if '*' in sep[i + 1]:
-            parts = re.split(r'\*', sep[i + 1])
-            ftype   = parts[parts[0].isdigit()]
-            repeats = int(parts[parts[1].isdigit()])
+            temptypes = re.split(r'\*', sep[i + 1])
+            ftype = temptypes[temptypes[0].isdigit()]
+            repeats = int(temptypes[temptypes[1].isdigit()])
         else:
             ftype = sep[i + 1]
         fieldtype = getattr(np, ftype)
         typearr.append((str(fieldname), fieldtype, repeats))
     return np.dtype(typearr)
-
-
-def open_trodes_memmap(file_path):
-    """
-    Parse the Trodes header, then return:
-      - metadata dict  (samplingRate, voltageScaling, …)
-      - np.memmap of the structured binary data (zero RAM)
-    """
-    file_path = str(file_path)
-    fields_text = {}
-
-    with open(file_path, 'rb') as f:
-        first_line = f.readline().decode('ascii').strip()
-        if first_line != '<Start settings>':
-            raise ValueError("Settings format not supported")
-
-        for line in f:
-            line = line.decode('ascii').strip()
-            if line == '<End settings>':
-                break
-            key, val = line.split(': ', 1)
-            fields_text[key.lower()] = val
-
-        header_end = f.tell()
-
-    dt      = _parse_trodes_fields(fields_text['fields'])
-    data_mm = np.memmap(file_path, dtype=dt, mode='r', offset=header_end)
-
-    return fields_text, data_mm
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -67,17 +58,29 @@ def open_trodes_memmap(file_path):
 def find_lfp_dat_files(input_folder):
     """
     Find all Trodes-exported LFP .dat files under input_folder.
-    Trodes exportLFP creates a subfolder like:
-        <recording>.LFP/<recording>.LFP_nt<N>ch<C>.dat
-    Returns sorted list of Path objects.
+    Expects:  <recording>.LFP/<recording>.LFP_nt<N>ch<C>.dat
+    Also finds the timestamps file: <recording>.timestamps.dat
     """
     base = Path(input_folder)
-    # Look in *.LFP subdirectories for .dat files
-    lfp_files = sorted(base.glob("*.LFP/*.dat"))
+
+    # Find channel data files (exclude timestamps)
+    lfp_files = sorted(
+        f for f in base.glob("*.LFP/*.dat")
+        if 'timestamps' not in f.name.lower()
+    )
     if not lfp_files:
-        # Fallback: look for any LFP .dat directly in folder
-        lfp_files = sorted(base.glob("*LFP*.dat"))
-    return lfp_files
+        lfp_files = sorted(
+            f for f in base.glob("*LFP*.dat")
+            if 'timestamps' not in f.name.lower()
+        )
+
+    # Find timestamps file
+    ts_files = list(base.glob("*.LFP/*.timestamps.dat"))
+    if not ts_files:
+        ts_files = list(base.glob("*.LFP/*timestamps*.dat"))
+    ts_file = ts_files[0] if ts_files else None
+
+    return lfp_files, ts_file
 
 
 def parse_channel_info(filename):
@@ -89,32 +92,36 @@ def parse_channel_info(filename):
     match = re.search(r'_nt(\d+)ch(\d+)', stem)
     if match:
         return int(match.group(1)), int(match.group(2))
-    # Fallback: just use index
     return None, None
 
 
-def load_lfp_channels(lfp_files):
+def load_lfp_channels(lfp_files, ts_file):
     """
-    Read each Trodes LFP .dat, extract voltage data, return as list of dicts.
-    Each dict has: 'data' (1-D float32), 'ntrode', 'channel', 'fs', 'file'.
+    Read each Trodes LFP .dat using the official reader.
+    Returns:
+      - channels: list of dicts with 'data', 'ntrode', 'channel', 'file'
+      - timestamps: 1-D array of raw timestamps (or None)
+      - fs: sampling rate from file header
     """
     channels = []
+    fs = None
 
     for f in tqdm(lfp_files, desc="  Reading LFP .dat files", unit='file'):
-        meta, data_mm = open_trodes_memmap(f)
-        fs = float(meta.get('samplingrate', meta.get('clockrate', 1000)))
-        voltage_scale = float(meta.get('voltagescaling', 0.195))
+        result = readTrodesExtractedDataFile(str(f))
+        data = result['data']
 
-        # Get the voltage field (Trodes LFP files typically have 'voltage')
-        field_names = data_mm.dtype.names
-        if 'voltage' in field_names:
-            raw = np.array(data_mm['voltage'], dtype='float32')
-        else:
-            # Use the first non-time field
-            data_field = [n for n in field_names if n != 'time'][0]
-            raw = np.array(data_mm[data_field], dtype='float32')
+        # Get sampling rate from header
+        if fs is None:
+            fs = float(result.get('samplingrate',
+                       result.get('clockrate', 1000)))
 
-        # Apply voltage scaling
+        # Extract voltage scaling
+        voltage_scale = float(result.get('voltagescaling', 0.195))
+
+        # Get the data field — first field in the structured array
+        field_names = data.dtype.names
+        data_field = field_names[0]
+        raw = data[data_field].astype('float32').flatten()
         voltage = raw * voltage_scale
 
         nt, ch = parse_channel_info(f)
@@ -122,12 +129,19 @@ def load_lfp_channels(lfp_files):
             'data': voltage,
             'ntrode': nt,
             'channel': ch,
-            'fs': fs,
             'file': f,
         })
-        del data_mm
 
-    return channels
+    # Load timestamps from separate file
+    timestamps = None
+    if ts_file is not None:
+        tqdm.write(f"  Loading timestamps from {ts_file.name}")
+        ts_result = readTrodesExtractedDataFile(str(ts_file))
+        ts_data = ts_result['data']
+        ts_field = ts_data.dtype.names[0]
+        timestamps = ts_data[ts_field].flatten()
+
+    return channels, timestamps, fs
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -181,8 +195,7 @@ def select_cleanest_channels(lfp_array, fs, n_best=3, segment_duration_s=60):
 # AWAKENESS
 # ──────────────────────────────────────────────────────────────────────────────
 
-def compute_awakeness(lfp_array, emg_1d, fs, best_ch_idx,
-                      epoch_s=1):
+def compute_awakeness(lfp_array, emg_1d, fs, best_ch_idx, epoch_s=1):
     n_samples   = lfp_array.shape[0]
     n_per_epoch = int(fs * epoch_s)
     n_epochs    = n_samples // n_per_epoch
@@ -261,24 +274,23 @@ def run_pipeline(input_folder, output_folder):
         tqdm.write(f"▶  Input: {base_path}")
         tqdm.write("Step 1/5 — Finding Trodes-exported LFP .dat files")
 
-        lfp_files = find_lfp_dat_files(input_folder)
+        lfp_files, ts_file = find_lfp_dat_files(input_folder)
         if not lfp_files:
             tqdm.write("❌  No LFP .dat files found! Check your input folder.")
             tqdm.write("    Expected: <recording>.LFP/<recording>.LFP_nt*ch*.dat")
             return
 
         tqdm.write(f"  Found {len(lfp_files)} LFP channel file(s)")
-        channels = load_lfp_channels(lfp_files)
+        if ts_file:
+            tqdm.write(f"  Found timestamps: {ts_file.name}")
 
-        # Determine sampling rate from the first file
-        fs = channels[0]['fs']
-        tqdm.write(f"  Sampling rate: {fs} Hz")
+        channels, timestamps_raw, fs = load_lfp_channels(lfp_files, ts_file)
+        tqdm.write(f"  Sampling rate from header: {fs} Hz")
         advance(1)
 
         # ── 2. SAVE PER-CHANNEL .npy + COMBINED ARRAY ───────────────────────
         tqdm.write("Step 2/5 — Converting to .npy files")
 
-        # Save individual channel .npy files
         npy_dir = output_dir / "channels_npy"
         npy_dir.mkdir(exist_ok=True)
 
@@ -300,10 +312,22 @@ def run_pipeline(input_folder, output_folder):
         lfp_array = np.column_stack([ch['data'] for ch in channels])
         np.save(output_dir / "lfp_data.npy", lfp_array)
 
-        timestamps = (np.arange(n_samples) / fs).astype('float64')
-        np.save(output_dir / "lfp_timestamps.npy", timestamps)
+        # Save timestamps
+        if timestamps_raw is not None:
+            np.save(output_dir / "lfp_timestamps_raw.npy", timestamps_raw)
+            # Convert to seconds using clockrate
+            clockrate = float(channels[0].get('clockrate', fs) if isinstance(channels[0], dict) else fs)
+            # Re-read clockrate from first file header
+            first_result = readTrodesExtractedDataFile(str(lfp_files[0]))
+            clockrate = float(first_result.get('clockrate', fs))
+            ts_seconds = (timestamps_raw.astype('float64') / clockrate)
+            ts_seconds -= ts_seconds[0]  # zero-referenced
+            np.save(output_dir / "lfp_timestamps.npy", ts_seconds)
+        else:
+            ts_seconds = (np.arange(n_samples) / fs).astype('float64')
+            np.save(output_dir / "lfp_timestamps.npy", ts_seconds)
 
-        # Save channel mapping info
+        # Save channel mapping
         ch_info_list = []
         for i, ch in enumerate(channels):
             ch_info_list.append({
@@ -316,7 +340,6 @@ def run_pipeline(input_folder, output_folder):
 
         tqdm.write(f"  ✓ lfp_data.npy  ({n_samples}, {num_channels}) @ {fs} Hz")
 
-        # Free individual channel data
         del channels
         gc.collect()
         advance(2)
