@@ -65,13 +65,15 @@ def find_lfp_dat_files(input_folder):
 
     # Find channel data files (exclude timestamps)
     lfp_files = sorted(
-        f for f in base.glob("*.LFP/*.dat")
-        if 'timestamps' not in f.name.lower()
+        (f for f in base.glob("*.LFP/*.dat")
+         if 'timestamps' not in f.name.lower()),
+        key=lambda f: parse_channel_info(f)
     )
     if not lfp_files:
         lfp_files = sorted(
-            f for f in base.glob("*LFP*.dat")
-            if 'timestamps' not in f.name.lower()
+            (f for f in base.glob("*LFP*.dat")
+             if 'timestamps' not in f.name.lower()),
+            key=lambda f: parse_channel_info(f)
         )
 
     # Find timestamps file
