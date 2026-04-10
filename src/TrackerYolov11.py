@@ -32,7 +32,6 @@ import argparse
 import glob
 from tqdm import tqdm
 
-
 # --- CONFIGURATION ---
 FONT = cv2.FONT_HERSHEY_TRIPLEX
 font = cv2.FONT_HERSHEY_PLAIN 
