@@ -62,18 +62,39 @@ def _build_graph():
 G     = _build_graph()
 _DIST = dict(nx.all_pairs_shortest_path_length(G))
 
+# Island-level graph (islands 1-4 only; homeboxes excluded)
+_between = [(24,25),(44,53),(72,73),(21,50),(47,76),(21,97),(47,98),(50,97),(76,98)]
+_ISLAND_G = nx.Graph()
+_ISLAND_G.add_nodes_from([1, 2, 3, 4])
+for _s, _t in _between:
+    _n1, _n2 = NDS[_s - 1], NDS[_t - 1]
+    _i1, _i2 = _n1 // 100, _n2 // 100
+    if 1 <= _i1 <= 4 and 1 <= _i2 <= 4 and _i1 != _i2:
+        _ISLAND_G.add_edge(_i1, _i2)
+_ISLAND_DIST = dict(nx.all_pairs_shortest_path_length(_ISLAND_G))
+
 RED_FILL = PatternFill(start_color='FFCCCC', end_color='FFCCCC', fill_type='solid')
 
-OUTPUT_COLS = [
+# Columns this script computes and writes values for.
+COMPUTED_COLS = {
+    'distance_start_goal_island',
+    'distance_start_goal_nodes',
+    'path_length_start_goal_island_island_hit',
+    'path_length_start_goal_island_node_hit',
+    'path_length_start_goal_nodes_node_hit',
+    'norm_path_length_start_goal_island_island_hit',
+    'norm_path_length_start_goal_island_node_hit',
+    'norm_path_length_start_goal_nodes_node_hit',
     'shortest_path', 'eat_on_1_encounter', 'n_nodes_visited', 'food_reached',
     'dist_tra', 'dt_rel_sp', 'dt_min_sp', 'dir_run_mat_perf',
     'node_choices_binary', 'perc_correct_choices',
     'isl_node_in', 'isl_short_path', 'isl_dt_trav', 'perf_in_island',
     'flag',
-]
+}
 
-# Columns created as empty headers if missing — existing values are never overwritten.
-PLACEHOLDER_COLS = [
+# All columns that appear after "comment" in the reference file, in exact order.
+# Columns in COMPUTED_COLS get values written; others get an empty header created only.
+ALL_OUTPUT_COLS = [
     'distance_start_goal_island',
     'distance_start_goal_nodes',
     'path_length_start_goal_island_island_hit',
@@ -85,16 +106,30 @@ PLACEHOLDER_COLS = [
     'Diff_Lat_reach_eat',
     'goal_island_i_e',
     'start_island_i_e',
+    'shortest_path',
+    'n_nodes_visited',
+    'food_reached',
+    'dist_tra',
+    'dt_rel_sp',
+    'dt_min_sp',
+    'dir_run_mat_perf',
     'dir_run_mat_lat',
+    'node_choices_binary',
+    'perc_correct_choices',
     'drug',
     'number_times_drug_infused',
     'lg-DT_REL_SP',
     'lg10-DT_REL_SP',
+    'isl_node_in',
+    'isl_short_path',
+    'isl_dt_trav',
+    'perf_in_island',
     'lg_perf_I',
     'Project',
     'Training_order',
     'Implant',
     'Number_of_goal_locations',
+    'flag',
 ]
 
 def _pick_sheet(xl):
@@ -110,11 +145,13 @@ def _compute(exc_path):
     df    = pd.read_excel(exc_path, sheet_name=sheet, header=0)
     print(f'  Sheet: "{sheet}"  |  {len(df)} rows')
 
-    for col in OUTPUT_COLS:
+    for col in COMPUTED_COLS:
         df[col] = np.nan if col not in ('flag', 'node_choices_binary') else ''
 
     for i, row in df.iterrows():
         if pd.isna(row['path_to_reach']) or str(row['path_to_reach']).strip() == '':
+            comment = str(row.get('comment', '')) if pd.notna(row.get('comment')) else ''
+            df.at[i, 'flag'] = comment.strip() if comment.strip() else 'unknown error'
             continue
 
         try:
@@ -133,6 +170,33 @@ def _compute(exc_path):
             food_reached = goal_node in path[-2:]
             shortest     = _DIST[start_node][goal_node]
             dist_tra     = (n_nodes - 1) if food_reached else 99
+
+            # ── Island-level distances ───────────────────────────────────────
+            start_island = int(row['start_island_n'])
+            goal_island  = int(row['goal_island_n'])
+            dist_isl     = _ISLAND_DIST[start_island][goal_island] + 1
+            dist_nodes   = shortest + 1
+
+            df.at[i, 'distance_start_goal_island'] = dist_isl
+            df.at[i, 'distance_start_goal_nodes']  = dist_nodes
+
+            seq_raw   = str(row['seq_islands']) if pd.notna(row['seq_islands']) else ''
+            seq_items = [x.strip() for x in seq_raw.split(',') if x.strip()]
+            pl_isl_node = len(seq_items)
+            pl_isl_isl  = len(set(seq_items))
+
+            df.at[i, 'path_length_start_goal_island_node_hit']    = pl_isl_node
+            df.at[i, 'path_length_start_goal_island_island_hit']  = pl_isl_isl
+            df.at[i, 'path_length_start_goal_nodes_node_hit']     = n_nodes
+            df.at[i, 'norm_path_length_start_goal_island_island_hit'] = (
+                pl_isl_isl / dist_isl if dist_isl > 0 else np.nan
+            )
+            df.at[i, 'norm_path_length_start_goal_island_node_hit'] = (
+                pl_isl_node / dist_isl if dist_isl > 0 else np.nan
+            )
+            df.at[i, 'norm_path_length_start_goal_nodes_node_hit'] = (
+                n_nodes / dist_nodes if dist_nodes > 0 else np.nan
+            )
 
             # ── Step 1 ───────────────────────────────────────────────────────
             df.at[i, 'shortest_path']      = shortest
@@ -207,38 +271,49 @@ def _save(df, sheet, exc_path, out_path):
         'isl_dt_trav':          ['isl_dt_trav',          'island_dt_traveled'],
     }
 
-    # For any OUTPUT_COL not already in the sheet, add it right after the last
-    # named column — skipping the empty phantom columns Excel often hides at the end.
+    # Append new columns right after the last named column, skipping phantom
+    # empty columns Excel sometimes hides at the end of the sheet.
     last_named_col = max(
         (c for c in range(1, ws.max_column + 1) if ws.cell(row=1, column=c).value is not None),
         default=ws.max_column
     )
     next_new_col = last_named_col + 1
+
+    # Pass 1 — walk ALL_OUTPUT_COLS in reference order.
+    # Computed cols → find or create, add to col_map for writing.
+    # Placeholder cols → create header only if missing, never written to.
     col_map = {}
-    for col_name in OUTPUT_COLS:
+    for col_name in ALL_OUTPUT_COLS:
         candidates = ALIASES.get(col_name, [col_name])
         matched = next((c for c in candidates if c in header_to_col), None)
-        if matched:
-            col_map[col_name] = header_to_col[matched]
+        if col_name in COMPUTED_COLS:
+            if matched:
+                col_map[col_name] = header_to_col[matched]
+            else:
+                print(f'  WARNING: "{col_name}" not found in sheet — adding as new column')
+                ws.cell(row=1, column=next_new_col, value=col_name)
+                col_map[col_name] = next_new_col
+                next_new_col += 1
         else:
-            print(f'  WARNING: "{col_name}" not found in sheet — adding as new column')
-            ws.cell(row=1, column=next_new_col, value=col_name)
-            col_map[col_name] = next_new_col
-            next_new_col += 1
+            if not matched:
+                ws.cell(row=1, column=next_new_col, value=col_name)
+                next_new_col += 1
 
-    # Create placeholder column headers if they don't already exist.
-    # Existing values in these columns are never touched.
-    for col_name in PLACEHOLDER_COLS:
-        if col_name not in header_to_col:
-            ws.cell(row=1, column=next_new_col, value=col_name)
-            next_new_col += 1
+    # Pass 2 — pick up computed cols that live before "comment" in the input
+    # section (e.g. eat_on_1_encounter) and aren't in ALL_OUTPUT_COLS.
+    for col_name in COMPUTED_COLS:
+        if col_name not in col_map:
+            candidates = ALIASES.get(col_name, [col_name])
+            matched = next((c for c in candidates if c in header_to_col), None)
+            if matched:
+                col_map[col_name] = header_to_col[matched]
 
-    # Clear all existing values in the output columns (rows 2 onwards)
+    # Clear existing values in computed columns only
     for col_idx in col_map.values():
         for excel_row in range(2, ws.max_row + 1):
             ws.cell(row=excel_row, column=col_idx).value = None
 
-    # Write values into the correct columns
+    # Write computed values
     for i, row in df.iterrows():
         excel_row  = i + 2      # pandas index 0 → Excel row 2 (row 1 is header)
         is_flagged = bool(row['flag'])
@@ -256,7 +331,8 @@ def _save(df, sheet, exc_path, out_path):
 # ── Run over every ip/op pair ─────────────────────────────────────────────────
 for ip_folder, op_folder in FOLDER_PAIRS:
     os.makedirs(op_folder, exist_ok=True)
-    excel_files = glob.glob(os.path.join(ip_folder, '*.xlsx'))
+    excel_files = [f for f in glob.glob(os.path.join(ip_folder, '*.xlsx'))
+                   if not os.path.basename(f).startswith('~$')]
 
     if not excel_files:
         print(f'No .xlsx files found in {ip_folder}')
