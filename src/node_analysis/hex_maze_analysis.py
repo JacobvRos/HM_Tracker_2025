@@ -72,6 +72,31 @@ OUTPUT_COLS = [
     'flag',
 ]
 
+# Columns created as empty headers if missing — existing values are never overwritten.
+PLACEHOLDER_COLS = [
+    'distance_start_goal_island',
+    'distance_start_goal_nodes',
+    'path_length_start_goal_island_island_hit',
+    'path_length_start_goal_island_node_hit',
+    'path_length_start_goal_nodes_node_hit',
+    'norm_path_length_start_goal_island_island_hit',
+    'norm_path_length_start_goal_island_node_hit',
+    'norm_path_length_start_goal_nodes_node_hit',
+    'Diff_Lat_reach_eat',
+    'goal_island_i_e',
+    'start_island_i_e',
+    'dir_run_mat_lat',
+    'drug',
+    'number_times_drug_infused',
+    'lg-DT_REL_SP',
+    'lg10-DT_REL_SP',
+    'lg_perf_I',
+    'Project',
+    'Training_order',
+    'Implant',
+    'Number_of_goal_locations',
+]
+
 def _pick_sheet(xl):
     for name in xl.sheet_names:
         if name.lower() == 'raw':
@@ -182,8 +207,13 @@ def _save(df, sheet, exc_path, out_path):
         'isl_dt_trav':          ['isl_dt_trav',          'island_dt_traveled'],
     }
 
-    # For any OUTPUT_COL not already in the sheet, add it at the end
-    next_new_col = ws.max_column + 1
+    # For any OUTPUT_COL not already in the sheet, add it right after the last
+    # named column — skipping the empty phantom columns Excel often hides at the end.
+    last_named_col = max(
+        (c for c in range(1, ws.max_column + 1) if ws.cell(row=1, column=c).value is not None),
+        default=ws.max_column
+    )
+    next_new_col = last_named_col + 1
     col_map = {}
     for col_name in OUTPUT_COLS:
         candidates = ALIASES.get(col_name, [col_name])
@@ -194,6 +224,13 @@ def _save(df, sheet, exc_path, out_path):
             print(f'  WARNING: "{col_name}" not found in sheet — adding as new column')
             ws.cell(row=1, column=next_new_col, value=col_name)
             col_map[col_name] = next_new_col
+            next_new_col += 1
+
+    # Create placeholder column headers if they don't already exist.
+    # Existing values in these columns are never touched.
+    for col_name in PLACEHOLDER_COLS:
+        if col_name not in header_to_col:
+            ws.cell(row=1, column=next_new_col, value=col_name)
             next_new_col += 1
 
     # Clear all existing values in the output columns (rows 2 onwards)
