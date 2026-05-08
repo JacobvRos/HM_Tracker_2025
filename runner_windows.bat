@@ -65,8 +65,9 @@ echo [5] Plotting
 echo [6] Compression
 echo [7] Sorting
 echo [8] LFP
-echo [d] deeplabcut 
+echo [d] deeplabcut
 echo [9] Cleaning
+echo [n] Node Analysis
 echo.
 set /p "MY_SELECTION=Enter steps: "
 
@@ -298,6 +299,15 @@ if %errorlevel% equ 0 (
             echo Deleting folder: %%~nxD
             rmdir /s /q "%%D"
         )
+    )
+)
+
+:: --- STEP n ---
+echo %STEPS_TO_RUN% | findstr "n" >nul
+if %errorlevel% equ 0 (
+    echo [STEP n] Running Node Analysis...
+    if exist ".\src\node_analysis\hex_maze_analysis.py" (
+        python -u ./src/node_analysis/hex_maze_analysis.py --input_folder "%IP%" --output_folder "%OP%"
     )
 )
 

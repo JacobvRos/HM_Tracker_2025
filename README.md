@@ -31,6 +31,9 @@ HM_Tracker_2025/
 │   ├── sorter/
 │   │   ├── sorting.py            # Kilosort4 spike sorting
 │   │   └── export_lfp.py         # LFP extraction & export
+│   ├── node_analysis/
+│   │   ├── hex_maze_analysis.py  # Hex maze behavioral metrics
+│   │   └── README.md             # Column-by-column calculation reference
 │   └── dlc/
 │       └── tracking_eyes.py      # DeepLabCut eye-tracking export
 ├── runner_windows.bat            # Main Windows orchestrator
@@ -233,6 +236,9 @@ Extracts LED blink signals from video frames using FastICA, aligns them with Tro
 
 ### `src/join_views.py`
 Stitches frames from multiple camera angles into a single wide video (`stitched.mp4`).
+
+### `src/node_analysis/hex_maze_analysis.py`
+Reads raw trial `.xlsx` files, computes behavioral metrics (shortest path, performance ratios, island-entry analysis), and writes results back into the spreadsheet. See [`src/node_analysis/README.md`](src/node_analysis/README.md) for a full explanation of every computed column.
 
 ### `src/sorter/sorting.py`
 Runs Kilosort4 via SpikeInterface on the raw Trodes export, outputs spike-sorted units.
