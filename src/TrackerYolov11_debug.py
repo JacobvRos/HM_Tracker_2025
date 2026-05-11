@@ -290,6 +290,9 @@ class Tracker:
         
         self.researcher_goal_timer = 0.0
         self.pickup_timer = 0.0
+        
+        # DEBUG MODE FLAG - Set to False to disable all debug annotations
+        self.debug_mode = True
 
     def run_vid(self):
         print('\nStarting video processing (Live Stream Enabled).....\n')
@@ -785,7 +788,7 @@ class Tracker:
                 closest_to_rat = self.closest_researcher_to(self.pos_centroid)
                 if closest_to_rat is not None:
                     dist_to_researcher = points_dist(self.pos_centroid, closest_to_rat)
-                    if dist_to_researcher <= 60:
+                    if dist_to_researcher <= 75:
                         self.pickup_timer += (1.0 / self.vid_fps)
                         if self.pickup_timer >= 1.0:
                             print(f'\n\n >>> Did Not Reach: Trial {self.trial_num} ended - rat picked up by researcher')
@@ -793,7 +796,8 @@ class Tracker:
                             self.normal_trial = False
                             self.end_trial()
                             self.pickup_timer = 0.0
-                    else:
+                    # don't reset pickup timer immediately, but only when researcher moves away, to avoid multiple rapid triggers
+                    elif self.pickup_timer > 0.0 and dist_to_researcher > 90:
                         self.pickup_timer = 0.0
     
     def end_trial(self):
@@ -918,91 +922,144 @@ class Tracker:
                         color=(0, 255, 0), thickness=1)
         else:
             cv2.putText(frame, "Closest Researcher: NONE", (x_start, y_offset),
-                        fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=(0, 0, 255), thickness=1)
+                        fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=(200, 200, 200), thickness=1)
         y_offset += line_height + 5
         
-        # DISTANCES & POSITIONS
+        # DISTANCES & POSITIONS - ALWAYS SHOW ALL
         cv2.putText(frame, "=== DISTANCES ===", (x_start, y_offset),
                     fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(0, 255, 255), thickness=1)
         y_offset += line_height
         
-        # Distance to goal
-        if self.goal_location and self.pos_centroid:
+        # Distance to goal - ALWAYS SHOW
+        if self.pos_centroid and self.goal_location:
             dist_to_goal = points_dist(self.pos_centroid, self.goal_location)
-            color = (0, 255, 0) if dist_to_goal <= self.goal_node_radius else (255, 0, 0)
             goal_name = self.current_goal_name if hasattr(self, 'current_goal_name') else "?"
-            cv2.putText(frame, f"Rat->Goal({goal_name}): {dist_to_goal:.1f}px (r:{self.goal_node_radius})", 
+            # Color based on current trial type threshold
+            if self.normal_trial:
+                threshold = self.goal_node_radius
+                color = (100, 255, 100) if dist_to_goal <= threshold else (255, 150, 150)
+            elif self.probe:
+                threshold = self.goal_node_radius
+                color = (100, 255, 100) if dist_to_goal <= threshold else (255, 150, 150)
+            elif self.NGL:
+                threshold = 20
+                color = (100, 255, 100) if dist_to_goal <= threshold else (255, 150, 150)
+            else:
+                threshold = self.goal_node_radius
+                color = (150, 200, 255)
+            cv2.putText(frame, f"Rat->Goal({goal_name}): {dist_to_goal:.1f}px (t:{threshold})", 
                         (x_start, y_offset), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, 
                         color=color, thickness=1)
-            y_offset += line_height
+        else:
+            cv2.putText(frame, f"Rat->Goal: N/A", (x_start, y_offset),
+                        fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=(150, 200, 255), thickness=1)
+        y_offset += line_height
         
-        # Closest researcher to goal
-        if self.goal_location and self.all_researchers:
+        # Closest researcher to goal - ALWAYS SHOW
+        if self.goal_location and len(self.all_researchers) > 0:
             closest_to_goal = self.closest_researcher_to(self.goal_location)
             if closest_to_goal:
                 dist_res_goal = points_dist(closest_to_goal, self.goal_location)
-                color = (0, 255, 0) if dist_res_goal <= 80 else (255, 100, 100)
-                cv2.putText(frame, f"Res->Goal: {dist_res_goal:.1f}px (<=80)", (x_start, y_offset),
+                # Show both 50 and 80 thresholds for context
+                color = (100, 255, 100) if dist_res_goal <= 50 else ((200, 200, 100) if dist_res_goal <= 80 else (255, 150, 150))
+                cv2.putText(frame, f"Res->Goal: {dist_res_goal:.1f}px (50|80)", (x_start, y_offset),
                             fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=color, thickness=1)
-                y_offset += line_height
+            else:
+                cv2.putText(frame, f"Res->Goal: N/A", (x_start, y_offset),
+                            fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=(150, 200, 255), thickness=1)
+        else:
+            cv2.putText(frame, f"Res->Goal: N/A", (x_start, y_offset),
+                        fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=(150, 200, 255), thickness=1)
+        y_offset += line_height
         
-        # Researcher to rat
+        # Researcher to rat - ALWAYS SHOW with dynamic threshold
         if self.Researcher and self.Rat:
             dist_res_rat = points_dist(self.Researcher, self.Rat)
-            color = (0, 255, 0) if dist_res_rat <= 80 else (255, 100, 100)
-            cv2.putText(frame, f"Res->Rat: {dist_res_rat:.1f}px (<=80 to start)", 
-                        (x_start, y_offset), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, 
-                        color=color, thickness=1)
-            y_offset += line_height
-        
-        # Researcher to start node
-        if self.all_researchers and not self.start_trial and self.counter < len(self.start_nodes_locations):
-            start_node_center = self.start_nodes_locations[self.counter]
-            closest_to_start = self.closest_researcher_to(start_node_center)
-            if closest_to_start:
-                dist_res_start = points_dist(closest_to_start, start_node_center)
-                color = (0, 255, 0) if dist_res_start <= 40 else (255, 0, 0)
-                cv2.putText(frame, f"Res->Start: {dist_res_start:.1f}px (need:<=40)", 
+            is_dnr = (self.counter < len(self.did_not_reach_list) and self.did_not_reach_list[self.counter] == 1)
+            if self.record_detections and self.normal_trial and is_dnr:
+                # DNR mode - show 60px hysteresis threshold
+                threshold = 60
+                color = (200, 230, 255) if dist_res_rat <= 60 else ((150, 200, 255) if dist_res_rat <= 75 else (255, 150, 150))
+                cv2.putText(frame, f"Res->Rat: {dist_res_rat:.1f}px (DNR:60|75)", 
                             (x_start, y_offset), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, 
                             color=color, thickness=1)
-                y_offset += line_height
+            else:
+                # Normal mode - show 80px startup threshold
+                color = (100, 255, 100) if dist_res_rat <= 80 else (255, 150, 150)
+                cv2.putText(frame, f"Res->Rat: {dist_res_rat:.1f}px (start:80)", 
+                            (x_start, y_offset), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, 
+                            color=color, thickness=1)
+        else:
+            cv2.putText(frame, f"Res->Rat: N/A", (x_start, y_offset),
+                        fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=(150, 200, 255), thickness=1)
+        y_offset += line_height
+        
+        # Researcher to start node - ALWAYS SHOW
+        if self.counter < len(self.start_nodes_locations):
+            start_node_center = self.start_nodes_locations[self.counter]
+            if len(self.all_researchers) > 0:
+                closest_to_start = self.closest_researcher_to(start_node_center)
+                if closest_to_start:
+                    dist_res_start = points_dist(closest_to_start, start_node_center)
+                    color = (100, 255, 100) if dist_res_start <= 40 else (255, 150, 150)
+                    cv2.putText(frame, f"Res->Start: {dist_res_start:.1f}px (40)", 
+                                (x_start, y_offset), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, 
+                                color=color, thickness=1)
+                else:
+                    cv2.putText(frame, f"Res->Start: N/A", (x_start, y_offset),
+                                fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=(150, 200, 255), thickness=1)
+            else:
+                cv2.putText(frame, f"Res->Start: N/A (no researchers)", (x_start, y_offset),
+                            fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=(150, 200, 255), thickness=1)
+        y_offset += line_height
         
         y_offset += 5
         
-        # TRIAL TIMERS
+        # TRIAL TIMERS - ALWAYS SHOW
         cv2.putText(frame, "=== TIMERS ===", (x_start, y_offset),
                     fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(0, 255, 255), thickness=1)
         y_offset += line_height
         
-        cv2.putText(frame, f"Researcher->Goal timer: {self.researcher_goal_timer:.1f}s (need:30s)", 
+        # Researcher->Goal timer
+        res_goal_color = (255, 150, 150) if self.researcher_goal_timer > 0 else (150, 200, 255)
+        cv2.putText(frame, f"Res->Goal timer: {self.researcher_goal_timer:.1f}s (30s)", 
                     (x_start, y_offset), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, 
-                    color=(255, 100, 100), thickness=1)
+                    color=res_goal_color, thickness=1)
         y_offset += line_height
         
-        if self.normal_trial and hasattr(self, 'pickup_timer'):
-            color = (100, 150, 255) if self.pickup_timer > 0 else (100, 200, 100)
-            cv2.putText(frame, f"Pickup timer: {self.pickup_timer:.2f}s (need:1.0s)", 
-                        (x_start, y_offset), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, 
-                        color=color, thickness=1)
-            y_offset += line_height
+        # Pickup timer - ALWAYS SHOW
+        pickup_timer_val = getattr(self, 'pickup_timer', 0.0)
+        pickup_color = (200, 230, 255) if pickup_timer_val > 0 else (150, 200, 255)
+        cv2.putText(frame, f"Pickup timer: {pickup_timer_val:.2f}s (1.0s)", 
+                    (x_start, y_offset), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, 
+                    color=pickup_color, thickness=1)
+        y_offset += line_height
         
+        # Trial time for NGL/Probe - ALWAYS SHOW IF RECORDING
         if self.record_detections and (self.NGL or self.probe):
             minutes = self.timer(start=self.start_time)
+            trial_time_color = (200, 230, 255)
             cv2.putText(frame, f"Trial time: {minutes}m", (x_start, y_offset),
-                        fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=(100, 200, 255), thickness=1)
+                        fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=trial_time_color, thickness=1)
+            y_offset += line_height
+        else:
+            cv2.putText(frame, f"Trial time: N/A", (x_start, y_offset),
+                        fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=(150, 150, 150), thickness=1)
             y_offset += line_height
         
-        # Lockout timer for type 4/5/6
+        # Lockout timer - ALWAYS SHOW IF APPLICABLE
+        lockout_color = (150, 150, 150)
+        lockout_text = "Lockout: --"
         if self.counter > 0 and self.counter - 1 < len(self.trial_types):
             prev_type = int(self.trial_types[self.counter - 1])
             if prev_type in [4, 5, 6] and not self.record_detections:
                 time_since = self.frame_time - getattr(self, 'last_trial_start_time_ms', -1e9)
                 remaining = max(0, self.lockout_duration_ms - time_since)
-                if remaining > 0:
-                    color = (0, 0, 255)
-                    cv2.putText(frame, f"Lockout: {remaining/1000:.1f}s", (x_start, y_offset),
-                                fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=color, thickness=1)
-                    y_offset += line_height
+                lockout_text = f"Lockout: {remaining/1000:.1f}s"
+                lockout_color = (100, 150, 255) if remaining > 0 else (150, 200, 255)
+        cv2.putText(frame, lockout_text, (x_start, y_offset),
+                    fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=lockout_color, thickness=1)
+        y_offset += line_height
         
         y_offset += 5
         
@@ -1046,12 +1103,12 @@ class Tracker:
         
         # Did Not Reach status
         is_dnr = (self.counter < len(self.did_not_reach_list) and self.did_not_reach_list[self.counter] == 1)
-        dnr_color = (0, 100, 255) if is_dnr else (100, 100, 100)
+        dnr_color = (200, 150, 255) if is_dnr else (150, 150, 150)
         cv2.putText(frame, f"Did Not Reach: {is_dnr}", (x_start, y_offset),
                     fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=dnr_color, thickness=1)
         y_offset += line_height
         
-        # Key conditions for state transitions
+        # Key conditions for state transitions - ALWAYS SHOW
         y_offset += 5
         cv2.putText(frame, "=== KEY CONDITIONS ===", (x_start, y_offset),
                     fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(0, 255, 255), thickness=1)
@@ -1059,38 +1116,53 @@ class Tracker:
         
         # When waiting for trial start
         if self.start_trial and self.counter < len(self.start_nodes_locations):
-            if self.all_researchers:
-                start_node = self.start_nodes_locations[self.counter]
+            start_node = self.start_nodes_locations[self.counter]
+            if len(self.all_researchers) > 0:
                 closest_to_start = self.closest_researcher_to(start_node)
                 dist_res_start = points_dist(closest_to_start, start_node) if closest_to_start else 999
-                color = (0, 255, 0) if dist_res_start <= 40 else (255, 0, 0)
+                color = (0, 255, 0) if dist_res_start <= 40 else (255, 150, 150)
                 cond = f"Res covers start: {dist_res_start:.1f}<=40? {dist_res_start <= 40}"
                 cv2.putText(frame, cond, (x_start, y_offset),
                             fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=color, thickness=1)
-                y_offset += line_height
+            else:
+                cv2.putText(frame, "Waiting start: no researchers", (x_start, y_offset),
+                            fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=(150, 200, 255), thickness=1)
+            y_offset += line_height
         
-        # When recording
+        # When recording - show relevant conditions
         if self.record_detections:
             if self.normal_trial:
-                dist = points_dist(self.pos_centroid, self.goal_location) if self.pos_centroid else 999
-                color = (0, 255, 0) if dist <= self.goal_node_radius else (255, 0, 0)
-                cv2.putText(frame, f"Reach goal: {dist:.1f}<={self.goal_node_radius}? {dist <= self.goal_node_radius}",
-                            (x_start, y_offset), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, 
-                            color=color, thickness=1)
+                if self.pos_centroid and self.goal_location:
+                    dist = points_dist(self.pos_centroid, self.goal_location)
+                    color = (0, 255, 0) if dist <= self.goal_node_radius else (255, 150, 150)
+                    is_dnr = (self.counter < len(self.did_not_reach_list) and self.did_not_reach_list[self.counter] == 1)
+                    if is_dnr:
+                        cond_text = f"DNR: pickup <=60/75? {self.pickup_timer:.2f}s"
+                        color = (200, 230, 255) if self.pickup_timer > 0 else (150, 200, 255)
+                    else:
+                        cond_text = f"Reach goal: {dist:.1f}<={self.goal_node_radius}? {dist <= self.goal_node_radius}"
+                    cv2.putText(frame, cond_text, (x_start, y_offset),
+                                fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, 
+                                color=color, thickness=1)
+                else:
+                    cv2.putText(frame, "Reach goal: N/A", (x_start, y_offset),
+                                fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=(150, 200, 255), thickness=1)
                 y_offset += line_height
             
             if self.NGL:
                 minutes = self.timer(start=self.start_time)
                 condition = f"NGL: time>=10min? {minutes >= 10} reached={self.reached}"
+                color = (200, 230, 255)
                 cv2.putText(frame, condition, (x_start, y_offset),
-                            fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=(100, 200, 255), thickness=1)
+                            fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=color, thickness=1)
                 y_offset += line_height
             
             if self.probe:
                 minutes = self.timer(start=self.start_time)
                 condition = f"Probe: time>=2min? {minutes >= 2}"
+                color = (200, 230, 255)
                 cv2.putText(frame, condition, (x_start, y_offset),
-                            fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=(100, 200, 255), thickness=1)
+                            fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.4, color=color, thickness=1)
                 y_offset += line_height
 
     @staticmethod
@@ -1131,8 +1203,9 @@ class Tracker:
         cv2.putText(frame, "FPS: {:.2f}".format(fps), (970, 650), fontFace=FONT, fontScale=0.75, color=(240, 240, 240),
                     thickness=1)
         
-        # ADD DEBUG STATE MACHINE ANNOTATIONS
-        self.annotate_debug_state(frame, x_start=10, y_start=200)
+        # ADD DEBUG STATE MACHINE ANNOTATIONS (toggle with self.debug_mode)
+        if self.debug_mode:
+            self.annotate_debug_state(frame, x_start=10, y_start=200)
         
         if self.counter < len(self.goal_locations):
             active_goal_loc = self.goal_locations[self.counter]
