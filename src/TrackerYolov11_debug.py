@@ -797,7 +797,8 @@ class Tracker:
             else:
                 # "Did Not Reach" end logic: trial ends when rat is picked up by researcher
                 # Use closest researcher to the RAT for pickup detection
-                if  (self.frame_time - self.last_trial_start_time_ms) >= 5000: # Skip pickup detection for the first 5 seconds to avoid false triggers right after trial start
+                time_since_trial_start = self.frame_time - getattr(self, 'last_trial_start_time_ms', -1e9)
+                if  time_since_trial_start >= 5000: # Skip pickup detection for the first 5 seconds to avoid false triggers right after trial start
                     closest_to_rat = self.closest_researcher_to(self.pos_centroid)
                     if closest_to_rat is not None:
                         dist_to_researcher = points_dist(self.pos_centroid, closest_to_rat)
