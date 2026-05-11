@@ -133,6 +133,18 @@ class Tracker:
         self.logger.info('Video Imported: {}'.format(vp))
         self.logger.info(f'The log format is: Video Timestamp(hh:mm:ss.ms), UTC Synchronised Timestamp in seconds, Rat position')
         
+        # --- SEPARATE DEBUG LOGGER ---
+        self.debug_logger = logging.getLogger('debug')
+        self.debug_logger.setLevel(logging.DEBUG)
+        if self.debug_logger.hasHandlers():
+            self.debug_logger.handlers.clear()
+        debug_logfile_name = '{}/log_debug_{}_{}.log'.format(out, str(self.date), 'Rat' + self.rat)
+        debug_fh = logging.FileHandler(str(debug_logfile_name))
+        debug_formatter = logging.Formatter('%(levelname)s : %(message)s')
+        debug_fh.setFormatter(debug_formatter)
+        self.debug_logger.addHandler(debug_fh)
+        self.debug_logger.info('Debug logging initialized for Video: {}'.format(vp))
+        
         print('\nCreating log files...')
 
         self.ts_file_loaded = False
@@ -452,7 +464,7 @@ class Tracker:
             self.current_goal_name = self.goal_nodes[self.counter]
             
             trial_type_name = {1: 'Standard', 2: 'NGL', 3: 'Probe', 4: 'Free Roaming 1 food', 5: 'Free Roaming 3 food', 6: 'NGL Free Roaming'}.get(current_trial_type, 'Unknown')
-            self.logger.info(f'[DEBUG] Recording Trial {self.trial_num} (dist={dist_to_node:.1f}px < 60px) Type={trial_type_name} Goal={self.current_goal_name}')
+            self.debug_logger.info(f'[DEBUG] Recording Trial {self.trial_num} (dist={dist_to_node:.1f}px < 60px) Type={trial_type_name} Goal={self.current_goal_name}')
             
             # --- RECORD TRIAL START TIME ---
             self.last_trial_start_time_ms = self.frame_time
@@ -462,19 +474,19 @@ class Tracker:
                 self.start_time = (self.frame_time / (1000 * 60)) % 60
                 if current_trial_type == 3:
                     self.probe = True
-                    self.logger.info(f'[DEBUG] Trial type 3 (PROBE) activated')
+                    self.debug_logger.info(f'[DEBUG] Trial type 3 (PROBE) activated')
                 if current_trial_type == 2:
                     self.NGL = True
-                    self.logger.info(f'[DEBUG] Trial type 2 (NGL) activated')
+                    self.debug_logger.info(f'[DEBUG] Trial type 2 (NGL) activated')
                     
             if current_trial_type in [4, 5, 6]:
                 self.NGL = True
                 self.start_time = (self.frame_time / (1000 * 60)) % 60
-                self.logger.info(f'[DEBUG] Trial type {current_trial_type} (special trial) activated')
+                self.debug_logger.info(f'[DEBUG] Trial type {current_trial_type} (special trial) activated')
                     
             if not self.probe and not self.NGL:
                 self.normal_trial = True
-                self.logger.info(f'[DEBUG] Trial type 1 (NORMAL) activated')
+                self.debug_logger.info(f'[DEBUG] Trial type 1 (NORMAL) activated')
 
             self.node_pos = []
             self.centroid_list = []
@@ -624,7 +636,7 @@ class Tracker:
                     not self.record_detections and dist <= 80 and can_trigger):
 
                     print(f">>> Lockout finished/not required. Starting Trial {self.trial_num}")
-                    self.logger.info(f"[DEBUG] Trial advanced via researcher proximity: dist={dist:.1f}px <= 80px, lockout OK")
+                    self.debug_logger.info(f"[DEBUG] Trial advanced via researcher proximity: dist={dist:.1f}px <= 80px, lockout OK")
                     self.start_trial = True
                     self.check = False
 
@@ -713,19 +725,19 @@ class Tracker:
                 if not self.covering_start_node:
                     self.covering_start_node = True
                     self.cover_start_timer = 0.0
-                    self.logger.info(f"[DEBUG] Researcher started covering start node. Need to hold for {self.cover_required_time}ms")
+                    self.debug_logger.info(f"[DEBUG] Researcher started covering start node. Need to hold for {self.cover_required_time}ms")
 
                 self.cover_start_timer += self.frame_time
 
                 if self.cover_start_timer >= self.cover_required_time:
-                    self.logger.info(f"[DEBUG] Trial START triggered: Researcher held start node for {self.cover_start_timer/1000:.2f}s")
+                    self.debug_logger.info(f"[DEBUG] Trial START triggered: Researcher held start node for {self.cover_start_timer/1000:.2f}s")
                     self.start_trial = True
                     self.check = False
                     self.covering_start_node = False
                     self.cover_start_timer = 0.0
             else:
                 if self.covering_start_node:
-                    self.logger.info(f"[DEBUG] Researcher left start node after {self.cover_start_timer/1000:.2f}s (insufficient hold time)")
+                    self.debug_logger.info(f"[DEBUG] Researcher left start node after {self.cover_start_timer/1000:.2f}s (insufficient hold time)")
                     self.covering_start_node = False
                     self.cover_start_timer = 0.0
 
@@ -742,21 +754,21 @@ class Tracker:
             if not self.reached:
                 if points_dist(self.pos_centroid, self.goal_location) <= 20:
                     self.reached = True
-                    self.logger.info(f'[DEBUG NGL] Rat reached goal at {minutes}m')
+                    self.debug_logger.info(f'[DEBUG] NGL: Rat reached goal at {minutes}m')
             if minutes >= 10:
                 print('\n\n >>> Ten minute passed... Goal location reached:', self.reached)
                 if self.reached:
                     if not is_immune:
                         print('\n\n >>> End New Goal Location Trial - timeout', self.trial_num, ' out of ',
                             self.num_trials)
-                        self.logger.info(f'[DEBUG NGL] Trial ended: 10min reached AND goal reached AND not immune')
+                        self.debug_logger.info(f'[DEBUG] NGL Trial ended: 10min reached AND goal reached AND not immune')
                         self.NGL = False
                         self.reached = False
                         self.end_trial()
                     else:
-                        self.logger.info(f'[DEBUG NGL] 10min reached but IMMUNE interval active - trial continues')
+                        self.debug_logger.info(f'[DEBUG] NGL 10min reached but IMMUNE interval active - trial continues')
                 else:
-                    self.logger.info(f'[DEBUG NGL] 10min reached but goal NOT reached - trial continues')
+                    self.debug_logger.info(f'[DEBUG] NGL 10min reached but goal NOT reached - trial continues')
 
         if self.probe:
             minutes = self.timer(start=self.start_time)
@@ -764,41 +776,42 @@ class Tracker:
                 dist_to_goal = points_dist(self.pos_centroid, self.goal_location)
                 if dist_to_goal <= self.goal_node_radius:
                     if not is_immune:
-                        self.logger.info(f'[DEBUG PROBE] Trial ended: 2min reached AND at goal AND not immune')
+                        self.debug_logger.info(f'[DEBUG] PROBE Trial ended: 2min reached AND at goal AND not immune')
                         self.probe = False
                         self.end_trial()
                     else:
-                        self.logger.info(f'[DEBUG PROBE] 2min reached but IMMUNE - trial continues')
+                        self.debug_logger.info(f'[DEBUG] PROBE 2min reached but IMMUNE - trial continues')
                 else:
-                    self.logger.info(f'[DEBUG PROBE] 2min reached but NOT at goal (dist={dist_to_goal:.1f} > {self.goal_node_radius})')
+                    self.debug_logger.info(f'[DEBUG] PROBE 2min reached but NOT at goal (dist={dist_to_goal:.1f} > {self.goal_node_radius})')
 
         if self.normal_trial:
             if not is_did_not_reach:
                 dist_to_goal = points_dist(self.pos_centroid, self.goal_location)
                 if dist_to_goal <= self.goal_node_radius:
                     if not is_immune:
-                        self.logger.info(f'[DEBUG NORMAL] Trial ended: rat reached goal')
+                        self.debug_logger.info(f'[DEBUG] NORMAL Trial ended: rat reached goal')
                         self.normal_trial = False
                         self.end_trial()
                     else:
-                        self.logger.info(f'[DEBUG NORMAL] Rat at goal but IMMUNE interval active')
+                        self.debug_logger.info(f'[DEBUG] NORMAL Rat at goal but IMMUNE interval active')
             else:
                 # "Did Not Reach" end logic: trial ends when rat is picked up by researcher
                 # Use closest researcher to the RAT for pickup detection
-                closest_to_rat = self.closest_researcher_to(self.pos_centroid)
-                if closest_to_rat is not None:
-                    dist_to_researcher = points_dist(self.pos_centroid, closest_to_rat)
-                    if dist_to_researcher <= 75:
-                        self.pickup_timer += (1.0 / self.vid_fps)
-                        if self.pickup_timer >= 1.0:
-                            print(f'\n\n >>> Did Not Reach: Trial {self.trial_num} ended - rat picked up by researcher')
-                            self.logger.info(f'[DEBUG DNR] Trial ended: rat picked up after {self.pickup_timer:.1f}s')
-                            self.normal_trial = False
-                            self.end_trial()
+                if  (self.frame_time - self.last_trial_start_time_ms) >= 5000: # Skip pickup detection for the first 5 seconds to avoid false triggers right after trial start
+                    closest_to_rat = self.closest_researcher_to(self.pos_centroid)
+                    if closest_to_rat is not None:
+                        dist_to_researcher = points_dist(self.pos_centroid, closest_to_rat)
+                        if dist_to_researcher <= 75:
+                            self.pickup_timer += (1.0 / self.vid_fps)
+                            if self.pickup_timer >= 1.0:
+                                print(f'\n\n >>> Did Not Reach: Trial {self.trial_num} ended - rat picked up by researcher')
+                                self.debug_logger.info(f'[DEBUG] DNR Trial ended: rat picked up after {self.pickup_timer:.1f}s')
+                                self.normal_trial = False
+                                self.end_trial()
+                                self.pickup_timer = 0.0
+                        # don't reset pickup timer immediately, but only when researcher moves away, to avoid multiple rapid triggers
+                        elif self.pickup_timer > 0.0 and dist_to_researcher > 90:
                             self.pickup_timer = 0.0
-                    # don't reset pickup timer immediately, but only when researcher moves away, to avoid multiple rapid triggers
-                    elif self.pickup_timer > 0.0 and dist_to_researcher > 90:
-                        self.pickup_timer = 0.0
     
     def end_trial(self):
         self.pos_centroid = self.goal_location
@@ -813,10 +826,10 @@ class Tracker:
         
         if self.counter < int(self.num_trials):
             self.trial_num += 1
-            self.logger.info(f"[DEBUG STATE] Trial #{self.counter-1} ended. Transitioning to WAITING_START for trial #{self.counter}")
+            self.debug_logger.info(f"[DEBUG] Trial #{self.counter-1} ended. Transitioning to WAITING_START for trial #{self.counter}")
         else:
             self.end_session = True
-            self.logger.info(f"[DEBUG STATE] All {self.num_trials} trials completed - END_SESSION=True")
+            self.debug_logger.info(f"[DEBUG] All {self.num_trials} trials completed - END_SESSION=True")
 
         self.record_detections = False
         self.count_rat = 0
